@@ -83,3 +83,27 @@ def config_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str
     for key, value in values.items():
         monkeypatch.setenv(key, value)
     return values
+
+
+@pytest.fixture
+def offline_msal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build MSAL clients against a fake authority.
+
+    MSAL performs OIDC discovery at construction, so any route that builds a
+    client reaches the network — which the socket guard above refuses, by
+    design. This substitutes a recorder for MSAL's HTTP client through the
+    documented `http_client` seam, keeping the guard intact rather than
+    weakening it for convenience.
+    """
+    from fakes import FakeHttpClient
+
+    import dsar.web.auth_routes as auth_routes
+    from dsar.auth import msal_client
+
+    real_build = msal_client.build_public_client
+
+    def build_offline(config, http_client=None):  # type: ignore[no-untyped-def]
+        return real_build(config, http_client=http_client or FakeHttpClient(config.tenant_id))
+
+    monkeypatch.setattr(msal_client, "build_public_client", build_offline)
+    monkeypatch.setattr(auth_routes, "build_public_client", build_offline)

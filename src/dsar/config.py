@@ -193,6 +193,16 @@ class Config:
     port: int = DEFAULT_PORT
     #: Optional. Off by default so the consent surface stays minimal.
     identity_expansion: bool = False
+    #: Whether a DSAR app role must be present in the ID token.
+    #:
+    #: Microsoft documents app roles for applications that sign users in, but
+    #: does not state the behaviour for **public clients**. The Phase 1 probe
+    #: settles it against a live tenant, and this flag records the answer
+    #: rather than a rewrite doing so. Default off: `appRoleAssignmentRequired`
+    #: on the service principal is what admits the token in the first place, so
+    #: requiring the claim before knowing it is emitted would lock out every
+    #: legitimate operator.
+    require_app_role: bool = False
     #: Hosted only. The user-assigned managed identity whose token is exchanged
     #: for the client assertion. Dedicated to this app — with a federated
     #: credential there is no secret, but anyone who can run code as this
@@ -315,6 +325,7 @@ def load_config(
         audit_dir=audit_dir,
         port=port,
         identity_expansion=_bool(expansion_raw) if expansion_raw else False,
+        require_app_role=_bool(pick("DSAR_REQUIRE_APP_ROLE", "require_app_role") or ""),
         uami_client_id=pick("DSAR_UAMI_CLIENT_ID", "uami_client_id"),
         audit_blob_url=pick("DSAR_AUDIT_BLOB_URL", "audit_blob_url"),
         base_url=pick("DSAR_BASE_URL", "base_url"),

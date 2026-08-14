@@ -30,6 +30,7 @@ from starlette.routing import Route
 
 from dsar import __version__
 from dsar.config import Config, ConfigError, load_config
+from dsar.web.auth_routes import AuthState, callback, current_principal, login, logout
 from dsar.web.security import (
     ALLOWED_STATIC,
     RequestLogMiddleware,
@@ -81,9 +82,33 @@ async def static(request: Request) -> Response:
     return FileResponse(path)
 
 
+async def whoami(request: Request) -> Response:
+    """Who is signed in, for the UI. 401 when nobody is.
+
+    Returns `oid` and display name only — never a token, never a raw claim
+    blob, and nothing about the tenant that a signed-out caller could read.
+    """
+    principal = current_principal(request)
+    if principal is None:
+        return JSONResponse({"signed_in": False}, status_code=401)
+    return JSONResponse(
+        {
+            "signed_in": True,
+            "oid": principal.oid,
+            "upn": principal.upn,
+            "roles": sorted(principal.roles),
+            "can_write": principal.can_write,
+        }
+    )
+
+
 def build_app(config: Config) -> Starlette:
     routes = [
         Route("/healthz", healthz, methods=["GET"]),
+        Route("/auth/login", login, methods=["GET"]),
+        Route("/auth/callback", callback, methods=["GET"]),
+        Route("/auth/logout", logout, methods=["POST"]),
+        Route("/api/whoami", whoami, methods=["GET"]),
         *[
             Route(path, static, methods=["GET"])
             for path in sorted(ALLOWED_STATIC)
@@ -91,6 +116,7 @@ def build_app(config: Config) -> Starlette:
     ]
     app = Starlette(routes=routes)
     app.state.config = config
+    app.state.auth = AuthState(config)
     # Order matters: the header middleware wraps the logger so that headers are
     # attached to every response including those the logger observes, and the
     # logger sees the status the client actually receives.

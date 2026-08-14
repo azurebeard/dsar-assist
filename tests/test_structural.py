@@ -200,9 +200,31 @@ def test_no_serializable_token_cache() -> None:
     that Conditional Access cannot see, cannot shorten and cannot revoke.
     """
     pattern = "Serializable" + "TokenCache"
-    allowed = {"tests/test_structural.py"}
+    allowed = {
+        # Both name the class in a comment explaining why the in-memory
+        # `msal.TokenCache` is used instead. Naming a thing in order to rule it
+        # out is the opposite of using it — and the comment is the reason the
+        # next person does not "helpfully" swap it in.
+        "src/dsar/auth/msal_client.py",
+        "src/dsar/auth/session.py",
+        "tests/test_structural.py",
+    }
     hits = [h for h in _scan(pattern) if h.rsplit(":", 1)[0] not in allowed]
     assert hits == []
+
+    # The ban is only meaningful if the class is genuinely never instantiated.
+    # A comment cannot be checked by reading comments, so check the AST too.
+    import ast
+
+    offenders: list[str] = []
+    for path in _python_files("src/dsar"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+                if name == "Serializable" + "TokenCache":
+                    offenders.append(f"{_rel(path)}:{node.lineno}")
+    assert offenders == []
 
 
 def test_msal_extensions_never_imported() -> None:
