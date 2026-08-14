@@ -98,3 +98,27 @@ def test_no_inline_script_would_survive_the_csp(client: TestClient) -> None:
 
 def test_no_server_header_leak(client: TestClient) -> None:
     assert "uvicorn" not in client.get("/healthz").headers.get("server", "").lower()
+
+
+def test_status_region_is_announced(client: TestClient) -> None:
+    """A screen reader user gets the same eleven-minute wait as everyone else
+    and deserves to be told about it, so the live region is asserted rather
+    than left to a visual check."""
+    body = client.get("/").text
+    assert 'role="status"' in body
+    assert 'aria-live="polite"' in body
+
+
+def test_every_submit_control_has_a_busy_path(client: TestClient) -> None:
+    """A click that takes eleven minutes must not look like a click that did
+    nothing. Every long-running action is wrapped so the button disables and
+    relabels — which also makes a double click impossible, and a double click
+    is separately how template narrowings got stacked."""
+    script = client.get("/app.js").text
+    for control in ("create-case", "expand", "run-both", "refresh-case"):
+        assert f'$("{control}")' in script, control
+    assert script.count("withBusy(") >= 4
+
+
+def test_reduced_motion_is_respected(client: TestClient) -> None:
+    assert "prefers-reduced-motion" in client.get("/style.css").text

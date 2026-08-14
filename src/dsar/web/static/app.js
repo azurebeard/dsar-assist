@@ -21,7 +21,7 @@
 
   let state = {
     case_id: null, reference: null, canWrite: false,
-    pollTimer: null, generated: null,
+    pollTimer: null, pollDelay: 10000, pollStarted: null, generated: null,
   };
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
@@ -48,9 +48,42 @@
   function fail(payload, fallback) {
     setText("error-detail", (payload && payload.message) || fallback);
     show("error");
+    status(null);
   }
 
   function clearError() { hide("error"); }
+
+  // One live region for "what is happening now". `role="status"` +
+  // aria-live="polite" so it is announced rather than only seen — an operator
+  // running a screen reader gets the same eleven-minute wait everyone else does
+  // and deserves to be told about it.
+  function status(text, busy) {
+    const bar = $("status");
+    if (!text) { bar.setAttribute("hidden", ""); return; }
+    setText("status-text", text);
+    $("status-spinner").toggleAttribute("hidden", !busy);
+    bar.removeAttribute("hidden");
+  }
+
+  // Disables the button for the duration and restores its label afterwards.
+  // Two things at once: it says the click landed, and it makes a double click
+  // impossible — which is separately how the template narrowings got stacked.
+  async function withBusy(button, label, work) {
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = label;
+    try {
+      return await work();
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
+  function markStep(step, state) {
+    const node = document.querySelector(`#run-progress li[data-step="${step}"]`);
+    if (node) node.className = state;
+  }
 
   // ------------------------------------------------------------- views
 
@@ -64,9 +97,10 @@
       tab.classList.toggle("active", tab.dataset.view === name);
     }
     if (state.pollTimer && name !== "case") {
-      clearInterval(state.pollTimer);
+      clearTimeout(state.pollTimer);
       state.pollTimer = null;
     }
+    status(null);
   }
 
   for (const tab of document.querySelectorAll(".tab")) {
@@ -167,15 +201,25 @@
     clearError();
     const reference = $("reference").value.trim();
     if (!reference) return fail(null, "A DSAR reference is required.");
-    try {
-      const { status, payload } = await api("/api/case/create", { reference });
-      if (status !== 201) return fail(payload, "The case could not be created.");
-      state.case_id = payload.case_id;
-      state.reference = payload.reference;
-      setText("case-created", "Case created: " + payload.display_name + ". Now identify the subject.");
-      show("case-created");
-      $("subject-fieldset").disabled = false;
-    } catch (err) { /* handled */ }
+    await withBusy($("create-case"), "Creating\u2026", async () => {
+      status("Creating the eDiscovery case in Microsoft Purview\u2026", true);
+      try {
+        const result = await api("/api/case/create", { reference });
+        if (result.status !== 201) {
+          return fail(result.payload, "The case could not be created.");
+        }
+        state.case_id = result.payload.case_id;
+        state.reference = result.payload.reference;
+        setText("case-created",
+          "Case created in Purview: " + result.payload.display_name +
+          ". Reference stored on the case, so it appears on any machine you " +
+          "sign in from. Now identify the subject.");
+        show("case-created");
+        $("subject-fieldset").disabled = false;
+        $("primary-email").focus();
+        status("Case created.", false);
+      } catch (err) { /* handled in api() */ }
+    });
   });
 
   // ------------------------------------------------------- expansion
@@ -184,18 +228,31 @@
 
   $("expand").addEventListener("click", async () => {
     clearError();
+    await withBusy($("expand"), "Resolving\u2026", () => doExpand());
+  });
+
+  async function doExpand() {
     try {
-      const { status, payload } = await api("/api/expand", {
+      status("Looking the subject up in the directory\u2026", true);
+      const { status: code, payload } = await api("/api/expand", {
         primary_email: $("primary-email").value.trim(),
         display_name: $("display-name").value.trim(),
         other_emails: lines("other-emails"),
         nicknames: lines("nicknames"),
         employee_id: $("employee-id").value.trim(),
       });
-      if (status !== 200) return fail(payload, "The subject could not be resolved.");
+      if (code !== 200) return fail(payload, "The subject could not be resolved.");
       renderExpansion(payload);
+      const found = (payload.identifiers || []).length;
+      const mentions = (payload.mentions || []).length;
+      setText("expand-note",
+        "Resolved " + found + " identifier" + (found === 1 ? "" : "s") +
+        " and " + mentions + " mention clause" + (mentions === 1 ? "" : "s") +
+        ". Review the queries below — nothing has run yet.");
+      show("expand-note");
+      status("Subject resolved. Review the queries before running them.", false);
     } catch (err) { /* handled */ }
-  });
+  }
 
   function renderExpansion(data) {
     const box = $("identifiers");
@@ -281,12 +338,13 @@
       const values = {};
       for (const [name, field] of Object.entries(fields)) values[name] = field.value;
       try {
-        const { status, payload } = await api("/api/template/apply", {
+        status("Applying \u201c" + template.name + "\u201d\u2026", true);
+        const { status: code, payload } = await api("/api/template/apply", {
           query: $("kql-expanded").value,
           template_id: template.id,
           values,
         });
-        if (status !== 200) return fail(payload, "The template could not be applied.");
+        if (code !== 200) return fail(payload, "The template could not be applied.");
         // Applying the same narrowing twice yields
         //   (... AND kind:email) AND kind:email
         // which is valid KQL, redundant, and unreadable — and for the date
@@ -300,6 +358,7 @@
             "generated one, or edit the text directly.");
         }
         $("kql-expanded").value = payload.query;
+        status("Applied \u201c" + template.name + "\u201d to the expanded query.", false);
       } catch (err) { /* handled */ }
     });
     wrap.appendChild(apply);
@@ -311,42 +370,96 @@
   $("run-both").addEventListener("click", async () => {
     clearError();
     if (!state.case_id) return fail(null, "Create the case first.");
-    try {
-      // The query sent is whatever is in the box — edited or not. A query the
-      // operator saw and a query that runs must be the same string, or the
-      // review step means nothing.
-      const naive = await api("/api/search/create", {
-        case_id: state.case_id, kind: "naive", query: $("kql-naive").value, run: true,
-      });
-      if (naive.status !== 201) return fail(naive.payload, "The naive search failed.");
+    await withBusy($("run-both"), "Running\u2026", async () => {
+      show("run-progress");
+      for (const step of ["naive", "naive-run", "expanded", "expanded-run"]) {
+        markStep(step, "");
+      }
+      try {
+        // The query sent is whatever is in the box — edited or not. A query the
+        // operator saw and a query that runs must be the same string, or the
+        // review step means nothing.
+        status("Creating the naive search\u2026", true);
+        markStep("naive", "doing");
+        const naive = await api("/api/search/create", {
+          case_id: state.case_id, kind: "naive",
+          query: $("kql-naive").value, run: true,
+        });
+        if (naive.status !== 201) {
+          markStep("naive", "failed");
+          return fail(naive.payload, "The naive search could not be created.");
+        }
+        markStep("naive", "done");
+        markStep("naive-run", "done");
 
-      const expanded = await api("/api/search/create", {
-        case_id: state.case_id, kind: "expanded", query: $("kql-expanded").value, run: true,
-      });
-      if (expanded.status !== 201) return fail(expanded.payload, "The expanded search failed.");
+        status("Creating the expanded search\u2026", true);
+        markStep("expanded", "doing");
+        const expanded = await api("/api/search/create", {
+          case_id: state.case_id, kind: "expanded",
+          query: $("kql-expanded").value, run: true,
+        });
+        if (expanded.status !== 201) {
+          markStep("expanded", "failed");
+          return fail(expanded.payload, "The expanded search could not be created.");
+        }
+        markStep("expanded", "done");
+        markStep("expanded-run", "done");
 
-      openCase({ case_id: state.case_id, reference: state.reference });
-    } catch (err) { /* handled */ }
+        status("Both estimates started. Watching for results\u2026", true);
+        openCase({ case_id: state.case_id, reference: state.reference });
+      } catch (err) { /* handled */ }
+    });
   });
 
   // ----------------------------------------------------- case detail
 
   async function openCase(item) {
     state.case_id = item.case_id;
+    state.pollStarted = Date.now();
+    state.pollDelay = 10000;
     setText("case-title", item.reference || item.display_name || "Case");
     showView("case");
-    await refreshCase();
-    // The polling ladder: brisk while an estimate is likely to land, then
-    // patient. Estimation is wildly variable — minutes on a cold index.
-    let delay = 10000;
-    state.pollTimer = setInterval(async () => {
-      const done = await refreshCase();
-      if (done && state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
-      else if (delay < 60000) { delay = Math.min(delay * 3, 60000); }
-    }, delay);
+
+    const done = await refreshCase();
+    if (!done) schedulePoll();
   }
 
-  $("back").addEventListener("click", () => { showView("requests"); loadRequests(); });
+  // The ladder: brisk while an estimate might land, then patient. Estimation is
+  // wildly variable — around eleven minutes against a cold index, under a
+  // minute after — so the elapsed counter matters more than the interval. A
+  // screen that has said "running" for nine minutes with no clock on it is
+  // indistinguishable from a screen that has hung.
+  function schedulePoll() {
+    if (state.pollTimer) clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(async () => {
+      const done = await refreshCase();
+      if (done) {
+        state.pollTimer = null;
+        return;
+      }
+      state.pollDelay = Math.min(state.pollDelay * 3, 60000);
+      schedulePoll();
+    }, state.pollDelay);
+  }
+
+  function elapsed() {
+    const seconds = Math.round((Date.now() - (state.pollStarted || Date.now())) / 1000);
+    if (seconds < 60) return seconds + "s";
+    return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+  }
+
+  $("refresh-case").addEventListener("click", async () => {
+    await withBusy($("refresh-case"), "Refreshing\u2026", async () => {
+      const done = await refreshCase();
+      if (!done) { state.pollDelay = 10000; schedulePoll(); }
+    });
+  });
+
+  $("back").addEventListener("click", () => {
+    if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+    showView("requests");
+    loadRequests();
+  });
 
   async function refreshCase() {
     try {
@@ -382,6 +495,26 @@
       }
 
       renderDelta(rows);
+
+      const running = rows.filter((s) => !(s.statistics || {}).complete).length;
+      if (rows.length && running) {
+        setText("poll-note",
+          running + " of " + rows.length + " estimate" +
+          (rows.length === 1 ? "" : "s") + " still running \u2014 " + elapsed() +
+          " so far. Purview takes around eleven minutes on a cold index and " +
+          "under a minute afterwards. This page updates on its own; you can " +
+          "leave it.");
+        show("poll-note");
+        status("Estimating \u2014 " + elapsed() + " elapsed", true);
+      } else if (rows.length) {
+        setText("poll-note", "All estimates complete after " + elapsed() + ".");
+        show("poll-note");
+        status("Estimates complete.", false);
+      } else {
+        hide("poll-note");
+        status(null);
+      }
+
       setText("case-portal", "Collect exports in the Microsoft Purview portal: " + payload.portal_url);
       return complete && rows.length > 0;
     } catch (err) { return true; }
@@ -416,12 +549,14 @@
 
   async function startExport(search) {
     clearError();
+    status("Starting the export in Purview\u2026", true);
     try {
-      const { status, payload } = await api("/api/export", {
+      const { status: code, payload } = await api("/api/export", {
         case_id: state.case_id, search_id: search.search_id, name: search.display_name,
       });
-      if (status !== 202) return fail(payload, "The export could not be started.");
+      if (code !== 202) return fail(payload, "The export could not be started.");
       setText("case-portal", payload.note + "  " + payload.portal_url);
+      status("Export started. Collect it in the Purview portal — this tool cannot.", false);
     } catch (err) { /* handled */ }
   }
 
