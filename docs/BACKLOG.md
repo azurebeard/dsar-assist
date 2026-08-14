@@ -216,6 +216,23 @@ Signs the **digest**, not the tag. A tag can be repointed; signing `:latest`
 would sign whatever `latest` means at verification time, which is not a
 signature.
 
+**Correction, 2026-08-14.** This was recorded as done before the workflow had
+ever succeeded. It failed all three times it ran, at *Attest provenance*:
+GitHub's attestation store refuses user-owned **private** repositories, and
+this repository is private by policy. The image was built and pushed, but the
+steps after it — cosign signing and the verification of that signature — never
+ran, so the published `:latest` was unsigned while the workflow claimed
+otherwise.
+
+The attestation step is now skipped on a private repository rather than marked
+`continue-on-error`, because a security step permitted to fail quietly is
+precisely how a Trivy scan came to be recorded as passed without running. The
+SBOM and SLSA provenance are still attached to the image by buildx, and the
+signature is still cosign's over the digest.
+
+Same lesson as the WS10 verdict in `HANDOVER.md` §7: block a claim on every
+check having *executed*, not on the summary line being green.
+
 Fixed alongside it, and the more important half: the launcher's default image
 `ghcr.io/azurebeard/dsar-assist:latest` **had never been published**, so
 `./dsar up` — the primary documented path — failed for anyone not running from

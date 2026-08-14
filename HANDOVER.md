@@ -183,6 +183,12 @@ Recorded because a handover listing only successes is not a handover.
 - **`WS10 Approved` was recorded before the image had ever been scanned.** The
   container job had failed earlier, so the blocking Trivy step never ran. Block
   a verdict on every check having *executed*.
+- **I recorded B-07 as done without watching the Publish workflow finish.** It
+  failed all three times it ever ran: GitHub's attestation store refuses
+  user-owned private repositories. The image was pushed; cosign signing and its
+  verification come after and never ran, so `:latest` was unsigned while the
+  workflow said it signed it. The same mistake as the line above, made again in
+  the same session — a green CI badge is not every workflow.
 
 The one that generalises: **SEC-H-02**, a path-traversal escape from the
 operations allowlist, existed because a *comment* claimed a guarantee the regex

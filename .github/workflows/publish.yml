@@ -77,7 +77,24 @@ jobs:
           sbom: true
           provenance: mode=max
 
+      # GitHub's attestation store refuses user-owned private repositories:
+      #   "Failed to persist attestation: Feature not available for user-owned
+      #    private repositories."
+      # This repository is private by policy, so the step failed every run —
+      # taking cosign signing and its verification down with it, because they
+      # come after. The published `:latest` was therefore unsigned while the
+      # workflow claimed to sign it.
+      #
+      # Skipped on a private repository rather than marked continue-on-error.
+      # A security step allowed to fail quietly is how a Trivy scan came to be
+      # recorded as passed without ever having run. A skip is visible in the
+      # job list; a green tick over a failure is not.
+      #
+      # Little is lost: buildx already attaches an SBOM and SLSA provenance
+      # (mode=max) to the image itself, and cosign signs the digest below. This
+      # step adds a second copy in GitHub's store, not the only copy.
       - name: Attest provenance
+        if: github.event.repository.private == false
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository }}
