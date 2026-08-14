@@ -360,6 +360,157 @@ def _looks_like_guid(value: str) -> bool:
     return all(c in "0123456789abcdefABCDEF" for p in parts for c in p)
 
 
+# --------------------------------------------------------------------- hosted
+
+
+def _check_client_assertion() -> Finding:
+    """Mint a client assertion and print the three values the FIC must match.
+
+    Microsoft's own documentation warns that a federated credential with the
+    wrong subject is *created successfully, without error* and fails only at
+    token exchange. So this reads `aud`, `iss` and `sub` off the assertion the
+    managed identity actually issues, and prints them for comparison against
+    what `add-fic.sh` registered.
+
+    The assertion is decoded, not validated — it is our own token, obtained
+    over the container's loopback identity endpoint, and its signature is
+    Entra's business. This is a diagnostic, not an authentication decision.
+    """
+    config = load_config()
+    if not config.mode.is_hosted:
+        return Finding("client assertion", Verdict.SKIP, "desktop mode")
+    if not config.uami_client_id:
+        return Finding(
+            "client assertion",
+            Verdict.FAIL,
+            "DSAR_UAMI_CLIENT_ID is not set",
+            "Hosted mode mints its client assertion from a user-assigned "
+            "managed identity. There is no secret to fall back to.",
+        )
+
+    from dsar.auth.managed_identity import AssertionError_, client_assertion_for
+
+    try:
+        token = client_assertion_for(config.uami_client_id)()
+    except AssertionError_ as exc:
+        return Finding(
+            "client assertion",
+            Verdict.FAIL,
+            str(exc),
+            "Check the Container App has identity: UserAssigned and that "
+            "DSAR_UAMI_CLIENT_ID names that identity's CLIENT id.",
+        )
+
+    claims = _unverified_claims(token)
+    if claims is None:
+        return Finding(
+            "client assertion",
+            Verdict.WARN,
+            "an assertion was minted but could not be decoded",
+            "The token is still usable; only this diagnostic is affected.",
+        )
+    return Finding(
+        "client assertion",
+        Verdict.PASS,
+        f"aud={claims.get('aud')} iss={claims.get('iss')} sub={claims.get('sub')}",
+        "The federated credential must match all three EXACTLY. `sub` is the "
+        "identity's principal id and is case-sensitive — it is not the client "
+        "id in DSAR_UAMI_CLIENT_ID.",
+    )
+
+
+def _check_fic_exchange() -> Finding:
+    """Prove Entra accepts the assertion, without creating anything.
+
+    Redeems a deliberately invalid authorization code. The two failures are
+    completely different things and Entra distinguishes them, which is what
+    makes this a usable probe rather than a deployment:
+
+      invalid_grant   client authentication SUCCEEDED. Entra is objecting only
+                      to the bogus code, which means the FIC is right.
+      invalid_client  client authentication FAILED. The FIC is wrong — compare
+                      the three values from the check above.
+
+    One request, nothing created, unambiguous either way. This is the live half
+    of the question recorded as the design's largest unknown; the offline half
+    (does MSAL send a client assertion on an authorization_code grant at all)
+    was answered in verification/2026-08-14-fic-assertion-offline.md.
+    """
+    config = load_config()
+    if not config.mode.is_hosted:
+        return Finding("FIC exchange", Verdict.SKIP, "desktop mode")
+
+    from dsar.auth.msal_client import build_client, scopes_for
+
+    try:
+        app = build_client(config)
+        result = app.acquire_token_by_authorization_code(
+            "invalid-code-this-probe-creates-nothing",
+            scopes=scopes_for(config),
+            redirect_uri=config.redirect_uri,
+        )
+    except ConfigError as exc:
+        return Finding("FIC exchange", Verdict.FAIL, str(exc))
+    except Exception as exc:  # a diagnostic must not take down the caller
+        return Finding(
+            "FIC exchange", Verdict.WARN, f"{type(exc).__name__}: {exc}"
+        )
+
+    error = str(result.get("error", ""))
+    description = str(result.get("error_description", ""))[:200]
+
+    if error == "invalid_grant":
+        return Finding(
+            "FIC exchange",
+            Verdict.PASS,
+            "client authentication succeeded — Entra rejected only the "
+            "deliberately invalid code, which is the expected result",
+        )
+    if error == "invalid_client":
+        return Finding(
+            "FIC exchange",
+            Verdict.FAIL,
+            f"client authentication FAILED: {description}",
+            "The federated credential does not match the assertion. Compare "
+            "aud/iss/sub above with what add-fic.sh registered, and remember "
+            "`sub` is the principal id, case-sensitive.",
+        )
+    if "AADSTS70021" in description:
+        return Finding(
+            "FIC exchange",
+            Verdict.WARN,
+            "no matching federated identity record found (AADSTS70021)",
+            "This is usually replication lag on a newly created credential. "
+            "Wait a few minutes and re-run before changing anything.",
+        )
+    return Finding(
+        "FIC exchange",
+        Verdict.WARN,
+        f"unexpected response: {error or 'no error'} {description}",
+        "Neither invalid_grant nor invalid_client, so this probe cannot say "
+        "whether client authentication worked. Read the description.",
+    )
+
+
+def _unverified_claims(token: str) -> dict[str, object] | None:
+    """Decode a JWT payload without validating it.
+
+    Ours, from the loopback identity endpoint, for display only. Validation is
+    Entra's job and doing it here would be a second implementation of an
+    authority we do not own.
+    """
+    import base64
+    import json as _json
+
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = _json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
 # ------------------------------------------------------------------ registry
 
 CHECKS: tuple[Check, ...] = (
@@ -372,6 +523,12 @@ CHECKS: tuple[Check, ...] = (
     Check("configuration", False, _check_config),
     Check("redirect URI", False, _check_redirect_uri),
     Check("audit sink", False, _check_audit_dir),
+    # Hosted only, and both reach the network. `--offline` skips them; so does
+    # desktop mode, which is why they report SKIP rather than PASS there — a
+    # check that passes without running is the mistake this project keeps
+    # finding.
+    Check("client assertion", True, _check_client_assertion),
+    Check("FIC exchange", True, _check_fic_exchange),
 )
 
 

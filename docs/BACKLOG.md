@@ -150,19 +150,47 @@ security reviews.
 
 ## B-03 · Phase 5 — hosted mode
 
-**Size:** 2–3 days + the FIC spike · **Blocks:** team use
+**Built, except the one thing that needs a deployment.** 2026-08-14
 
-Confidential client, federated credential, multi-operator sessions, Bicep,
-Container Apps. Unreviewed and unbuilt.
+| Piece | State |
+|---|---|
+| `auth/managed_identity.py` — mints the client assertion and the storage token | ✅ 10 tests |
+| `msal_client.build_client` — the one place the mode is consulted | ✅ hosted refuses to start without a UAMI |
+| `audit/blob.py` — append-blob sink | ✅ 10 tests, same chain and verifier as the file sink |
+| `infra/main.bicep` + modules | ✅ compiles; 8 structural tests, each proven by tampering |
+| `infra/entra/add-fic.sh` | ✅ idempotent, warns about the case-sensitive subject |
+| `dsar doctor` hosted checks | ✅ assertion aud/iss/sub, and the `invalid_client` vs `invalid_grant` probe |
+| B-06 session eviction | ✅ see below |
+| **The live FIC exchange** | ✗ **needs a deployment** |
 
-The offline half of the FIC unknown is answered — MSAL does send
-`client_assertion` on an `authorization_code` grant, lazily, with no secret.
-What remains is whether Entra *accepts* a managed-identity-minted assertion for
-that grant, which needs a real Container App. Expect `AADSTS700213` or
-`AADSTS70021` on refusal rather than a silent fallback.
+### What is still unknown
 
-Requires its own WS10 pass. The Entra/MSAL check area in the Phase 1–4 review
-is marked design-only for exactly this reason.
+**Does Entra accept a managed-identity-minted assertion on an
+`authorization_code` grant?** The offline half is answered — MSAL does send
+`client_assertion` on that grant, lazily, with no secret
+(`verification/2026-08-14-fic-assertion-offline.md`). Every Microsoft sample
+for federated-credential-by-managed-identity uses `AcquireTokenForClient`,
+which is app-only, so this remains unproven by anyone's documentation.
+
+`dsar doctor` answers it in one request that creates nothing: redeem a
+deliberately invalid authorization code, and read the refusal.
+`invalid_grant` means client authentication succeeded and Entra objected only
+to the bogus code. `invalid_client` means it did not.
+
+**It needs a real Container App and a real UAMI, so it needs Ben's decision to
+deploy.** Nothing else in B-03 is blocked on it.
+
+Expect `AADSTS70021` for a few minutes after creating the credential — that is
+replication, not misconfiguration.
+
+### Still to do after the deployment lands
+
+* Two operators signing in concurrently, each as themselves — the
+  `prompt=select_account` property, run by hand as well as in CI
+* The immutability policy locked, which is irreversible and therefore a human's
+  decision rather than a template default
+* CA02 and CA11
+* A WS10 pass over the hosted attack surface, which is unreviewed
 
 ---
 
@@ -194,14 +222,22 @@ desktop, because the desktop path's value is running wherever the operator is.
 
 ---
 
-## B-06 · Session eviction on a shared instance
+## B-06 · Session eviction on a shared instance ✅ DONE 2026-08-14
 
-**Size:** small · **Raised by:** OWASP A04 pass
+The store evicted the globally-oldest session to make room. On a desktop that
+is one operator and harmless. On a shared instance it means a signed-in
+operator opening tabs silently signs out a colleague, mid-case, with no message
+either of them can see — a bystander paying for someone else's traffic, which
+is the same defect the flow store had.
 
-`SessionStore` evicts LRU at 64. Reaching it needs authentication, so it is not
-an unauthenticated denial of service — but on a shared hosted instance an
-authenticated operator can evict colleagues. Belongs to the B-03 review, where
-the multi-operator model is in scope.
+Two bounds instead of one. **Per principal**, evicting their own oldest, so one
+person's habits cost that person. Then a **global cap that refuses**: with
+everyone inside their own budget, a full store means genuinely too many people
+rather than one person misbehaving, and refusing is visible while leaving every
+established session working.
+
+The refusal is a 503 and is written to the trail. A trail holding only
+successes describes a system where nobody is ever turned away.
 
 ---
 

@@ -112,3 +112,75 @@ def test_json_output_is_machine_readable(config_env, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["failed"] == 0
     assert {f["check"] for f in payload["findings"]} >= {"mode", "configuration"}
+
+
+def test_hosted_checks_skip_on_the_desktop(config_env) -> None:
+    """SKIP rather than PASS, deliberately.
+
+    A check that reports success without having run is the mistake this
+    project keeps rediscovering — a Trivy scan recorded as passed behind a
+    failed job, a pip guard that could not fail, an `innerHTML` rule nothing
+    enforced. Desktop mode has no managed identity to ask, so the honest
+    verdict is that the question was not put.
+    """
+    from dsar.doctor.checks import Verdict, run_checks
+
+    findings = {f.check: f for f in run_checks(offline=False)}
+    for name in ("client assertion", "FIC exchange"):
+        assert findings[name].verdict is Verdict.SKIP, findings[name].detail
+
+
+def test_hosted_without_a_managed_identity_fails_rather_than_warns(
+    monkeypatch, config_env
+) -> None:
+    """There is no secret to fall back to, so this is not a degraded mode."""
+    from dsar.doctor.checks import Verdict, _check_client_assertion
+
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.delenv("DSAR_UAMI_CLIENT_ID", raising=False)
+
+    finding = _check_client_assertion()
+    assert finding.verdict is Verdict.FAIL
+    assert "DSAR_UAMI_CLIENT_ID" in finding.detail
+
+
+def test_the_assertion_check_reports_the_three_values_the_fic_must_match(
+    monkeypatch, config_env
+) -> None:
+    """Microsoft's own warning is that a wrong subject is created without error
+    and fails only at exchange. Printing aud/iss/sub is what makes the
+    comparison possible at all."""
+    import base64
+    import json
+
+    from dsar.doctor import checks as checks_module
+    from dsar.doctor.checks import Verdict, _check_client_assertion
+
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_UAMI_CLIENT_ID", "99999999-8888-7777-6666-555555555555")
+
+    def fake_jwt(claims: dict) -> str:
+        body = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        return f"header.{body}.signature"
+
+    token = fake_jwt(
+        {
+            "aud": "api://AzureADTokenExchange",
+            "iss": "https://login.microsoftonline.com/tid/v2.0",
+            "sub": "PRINCIPAL-ID-CASE-SENSITIVE",
+        }
+    )
+    monkeypatch.setattr(
+        checks_module, "load_config", checks_module.load_config
+    )
+    import dsar.auth.managed_identity as mi
+
+    monkeypatch.setattr(mi, "client_assertion_for", lambda *a, **k: (lambda: token))
+
+    finding = _check_client_assertion()
+    assert finding.verdict is Verdict.PASS
+    assert "api://AzureADTokenExchange" in finding.detail
+    assert "PRINCIPAL-ID-CASE-SENSITIVE" in finding.detail
+    assert "principal id" in finding.fix and "case-sensitive" in finding.fix

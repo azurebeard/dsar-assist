@@ -117,10 +117,13 @@ Two things to do before trusting it.
 
 2. Prove the exchange, from inside the container, with no side effects:
 
-     dsar doctor --hosted
+     dsar doctor
 
-   It redeems a deliberately invalid authorization code. The two outcomes are
-   unambiguous and this is the whole point of doing it that way:
+   In hosted mode `doctor` runs two extra checks: it mints a client assertion
+   and prints its aud/iss/sub for comparison with what was registered above,
+   then redeems a deliberately invalid authorization code. The two outcomes of
+   that second check are unambiguous, which is the whole point of doing it
+   that way:
 
      invalid_grant   client authentication SUCCEEDED — the FIC is right, and
                      Entra is only objecting to the bogus code
