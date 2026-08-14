@@ -179,9 +179,18 @@ jobs:
           echo "$headers" | grep -q "default-src 'none'"       || { echo "CSP missing"; exit 1; }
           echo "$headers" | grep -qi 'x-frame-options: DENY'    || { echo "XFO missing"; exit 1; }
           echo "$headers" | grep -qi 'x-content-type-options'   || { echo "nosniff missing"; exit 1; }
-          # A file in static/ that nobody named in the allowlist is not served.
-          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/style.css)"
+          # A path nobody named in the allowlist is not served. Deliberately a
+          # name that could never become a real asset: this assertion is also
+          # made by the test suite, and when /style.css BECAME a legitimate
+          # asset the pytest twin was updated and this copy was not — four
+          # commits went red before anyone looked. Duplicating an assertion
+          # across two languages is how that happens; the least this copy can
+          # do is use a path that will never legitimately exist.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/not-an-asset-ever.txt)"
           [ "$code" = "404" ] || { echo "unlisted static returned $code"; exit 1; }
+          # Path traversal out of the allowlist must not resolve either.
+          code="$(curl -s -o /dev/null -w '%{http_code}' --path-as-is http://127.0.0.1:8765/../pyproject.toml)"
+          [ "$code" = "404" ] || { echo "traversal returned $code"; exit 1; }
           docker port dsar-ci | grep -q '127.0.0.1:8765' || { echo "not loopback-only"; exit 1; }
           # Headers added because Phase 1 introduces an identity-provider redirect.
           echo "$headers" | grep -qi 'cross-origin-opener-policy: same-origin' \
