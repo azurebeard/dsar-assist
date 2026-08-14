@@ -35,9 +35,10 @@ from dsar.auth.desktop import DesktopTokenProvider
 from dsar.auth.msal_client import build_public_client
 from dsar.auth.session import Session
 from dsar.cases.service import CaseService
+from dsar.cases.workflow import Workflow
 from dsar.graph.client import GraphClient
 from dsar.graph.operations import GraphOperations
-from dsar.web.api import handle
+from dsar.web.api import API_ENDPOINTS, handle
 from dsar.web.auth_routes import AuthState, callback, current_principal, login, logout
 from dsar.web.security import (
     ALLOWED_STATIC,
@@ -141,31 +142,40 @@ async def api(request: Request) -> Response:
     session = state.sessions.get(request.cookies.get(state.session_cookie))
     assert session is not None  # current_principal just resolved it
 
+    service, workflow = _session_services(request, session)
     status, payload = handle(
         request.url.path,
         body,
         principal=principal,
-        cases=_case_service(request, session),
+        cases=service,
         config=config,
+        workflow=workflow,
     )
     return JSONResponse(payload, status_code=status)
 
 
-def _case_service(request: Request, session: Session) -> CaseService:
-    """One service per session, so its read cache is not shared between people."""
+def _session_services(
+    request: Request, session: Session
+) -> tuple[CaseService, Workflow]:
+    """One set of services per session.
+
+    Per-session, not global: the read cache holds one operator's cases, and the
+    token provider is bound to one identity at construction — so nothing
+    downstream can name another account even by mistake.
+    """
     if session.case_service is not None:
         return session.case_service  # type: ignore[no-any-return]
 
     config: Config = request.app.state.config
     app_client = build_public_client(config)
     # Rehydrate MSAL from the session's own cache: the token belongs to this
-    # operator and to nobody else, and the provider is bound to that identity
-    # at construction, so nothing downstream can name another account.
+    # operator and to nobody else.
     app_client.token_cache = session.cache
     provider = DesktopTokenProvider(app_client, config, session.principal)
-    service = CaseService(GraphOperations(GraphClient(provider)))
-    session.case_service = service
-    return service
+    operations = GraphOperations(GraphClient(provider))
+    services = (CaseService(operations), Workflow(operations, session.principal))
+    session.case_service = services
+    return services
 
 
 def build_app(config: Config) -> Starlette:
@@ -175,8 +185,10 @@ def build_app(config: Config) -> Starlette:
         Route("/auth/callback", callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["POST"]),
         Route("/api/whoami", whoami, methods=["GET"]),
-        Route("/api/requests", api, methods=["POST"]),
-        Route("/api/me", api, methods=["POST"]),
+        *[
+            Route(endpoint, api, methods=["POST"])
+            for endpoint in API_ENDPOINTS
+        ],
         *[
             Route(path, static, methods=["GET"])
             for path in sorted(ALLOWED_STATIC)

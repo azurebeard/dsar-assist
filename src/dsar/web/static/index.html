@@ -9,6 +9,10 @@
 <body>
 <header>
   <h1>DSAR Assist</h1>
+  <nav id="nav" hidden>
+    <button class="tab" data-view="requests" type="button">Requests</button>
+    <button class="tab" data-view="new-request" type="button">New request</button>
+  </nav>
   <div id="identity" class="identity" aria-live="polite">
     <span class="muted">checking…</span>
   </div>
@@ -19,23 +23,14 @@
     <h2>Sign in</h2>
     <p>
       This tool acts entirely as you. It holds no credential of its own and
-      cannot see anything your own Purview permissions do not already allow.
+      cannot see anything your own Microsoft Purview permissions do not already
+      allow.
     </p>
     <p><a class="button" href="/auth/login">Sign in with Microsoft</a></p>
   </section>
 
-  <section id="signed-in" hidden>
-    <h2>Signed in</h2>
-    <dl class="facts">
-      <dt>Account</dt><dd id="fact-upn">—</dd>
-      <dt>Object ID</dt><dd id="fact-oid" class="mono">—</dd>
-      <dt>App roles</dt><dd id="fact-roles">—</dd>
-      <dt>Can create cases</dt><dd id="fact-write">—</dd>
-    </dl>
-    <p><button id="signout" class="button secondary" type="button">Sign out</button></p>
-  </section>
-
-  <section id="requests" hidden>
+  <!-- ------------------------------------------------------- requests -->
+  <section id="view-requests" class="view" hidden>
     <div class="row">
       <h2>DSAR requests</h2>
       <div id="scope-controls" hidden>
@@ -60,6 +55,108 @@
     <p id="requests-source" class="muted small"></p>
   </section>
 
+  <!-- ---------------------------------------------------- new request -->
+  <section id="view-new-request" class="view" hidden>
+    <h2>New request</h2>
+    <p class="muted">
+      Step 1 creates the eDiscovery case. Step 2 works out who the subject is
+      and shows you the query before anything runs.
+    </p>
+
+    <fieldset>
+      <legend>1 · The request</legend>
+      <label for="reference">DSAR reference</label>
+      <input id="reference" type="text" placeholder="DSAR-2026-0142" autocomplete="off">
+      <p class="muted small">
+        Stored on the case so it can be found from any machine, and shown in the
+        Purview portal.
+      </p>
+      <button id="create-case" class="button" type="button">Create case</button>
+      <p id="case-created" class="muted small" hidden></p>
+    </fieldset>
+
+    <fieldset id="subject-fieldset" disabled>
+      <legend>2 · The data subject</legend>
+
+      <label for="primary-email">Primary email</label>
+      <input id="primary-email" type="email" placeholder="meganb@example.com" autocomplete="off">
+
+      <label for="display-name">Full name</label>
+      <input id="display-name" type="text" placeholder="Megan Bowen" autocomplete="off">
+
+      <label for="other-emails">Other addresses <span class="muted">(one per line)</span></label>
+      <textarea id="other-emails" rows="2" placeholder="megan.bowen.personal@example.com"></textarea>
+
+      <label for="nicknames">Nicknames and former names <span class="muted">(one per line)</span></label>
+      <textarea id="nicknames" rows="2" placeholder="Meg"></textarea>
+      <p class="muted small">
+        A nickname is knowledge, not a directory field — expansion cannot
+        discover it, and in testing it was worth an extra location the naive
+        query never looked at.
+      </p>
+
+      <label for="employee-id">Employee ID</label>
+      <input id="employee-id" type="text" placeholder="E-4411" autocomplete="off">
+
+      <button id="expand" class="button" type="button">Resolve identity</button>
+    </fieldset>
+
+    <!-- --------------------------------------------------- the delta -->
+    <section id="expansion" hidden>
+      <h3>What the directory knows</h3>
+      <div id="identifiers"></div>
+      <p id="expansion-warnings" class="warn small" hidden></p>
+
+      <h3>Two queries</h3>
+      <p class="muted small">
+        Both are editable. An expansion is a set of inferences about who someone
+        is, and inferences belong in front of the person accountable for the
+        search rather than inside it. Nothing runs until you say so.
+      </p>
+
+      <div class="query-block">
+        <label for="kql-naive">Naive — primary address only</label>
+        <textarea id="kql-naive" rows="3" spellcheck="false"></textarea>
+      </div>
+
+      <div class="query-block">
+        <label for="kql-expanded">Expanded — resolved identifiers and mentions</label>
+        <textarea id="kql-expanded" rows="6" spellcheck="false"></textarea>
+      </div>
+
+      <details>
+        <summary>Narrow it further</summary>
+        <div id="templates" class="templates"></div>
+      </details>
+
+      <p>
+        <button id="run-both" class="button" type="button">Create and run both searches</button>
+      </p>
+      <p class="muted small">
+        Estimation is slow the first time a case is touched — around eleven
+        minutes against a cold index, under a minute after. Run these ahead of
+        any demonstration and present completed numbers.
+      </p>
+    </section>
+  </section>
+
+  <!-- --------------------------------------------------- case detail -->
+  <section id="view-case" class="view" hidden>
+    <div class="row">
+      <h2 id="case-title">Case</h2>
+      <button id="back" class="button secondary" type="button">Back to requests</button>
+    </div>
+    <table id="searches-table" hidden>
+      <thead>
+        <tr><th>Search</th><th>Items</th><th>Locations</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody id="searches-body"></tbody>
+    </table>
+    <p id="delta" class="delta" hidden></p>
+    <p id="searches-empty" class="muted" hidden>No searches in this case yet.</p>
+    <p id="case-portal" class="muted small"></p>
+  </section>
+
   <section id="error" hidden>
     <h2>Something went wrong</h2>
     <p id="error-detail" class="muted"></p>
@@ -71,6 +168,7 @@
       content — exports are collected from the Microsoft Purview portal under
       your own identity.
     </p>
+    <p><button id="signout" class="button secondary small" type="button">Sign out</button></p>
   </footer>
 </main>
 

@@ -128,3 +128,60 @@ select {
   background: var(--bg);
   color: var(--fg);
 }
+
+nav { display: flex; gap: 0.25rem; }
+.tab {
+  font: inherit; padding: 0.4rem 0.85rem; cursor: pointer;
+  background: transparent; color: var(--muted);
+  border: 1px solid transparent; border-radius: 4px;
+}
+.tab.active { color: var(--fg); background: var(--surface); border-color: var(--line); }
+
+fieldset {
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 1rem 1.25rem 1.25rem; margin: 0 0 1.25rem;
+}
+fieldset[disabled] { opacity: 0.5; }
+legend { padding: 0 0.4rem; color: var(--muted); font-size: 0.85rem; }
+
+label { display: block; margin: 0.85rem 0 0.3rem; font-size: 0.9rem; }
+input[type="text"], input[type="email"], input[type="date"], textarea, select {
+  font: inherit; width: 100%; padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); color: var(--fg);
+}
+textarea { resize: vertical; }
+#kql-naive, #kql-expanded {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem; line-height: 1.5;
+}
+.query-block { margin: 0 0 1rem; }
+
+.chip {
+  display: inline-block; margin: 0 0.35rem 0.35rem 0;
+  padding: 0.2rem 0.55rem; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+.chip.mention { border-style: dashed; }
+
+.warn { color: #a8620a; }
+@media (prefers-color-scheme: dark) { .warn { color: #e0a458; } }
+
+.delta {
+  margin: 1rem 0; padding: 0.85rem 1.1rem;
+  background: var(--surface); border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0; font-size: 1.02rem;
+}
+
+.templates { display: grid; gap: 1rem; margin-top: 0.75rem; }
+.template { padding: 0.85rem 1rem; border: 1px solid var(--line); border-radius: 6px; }
+.template h4 { margin: 0 0 0.3rem; font-size: 0.95rem; }
+
+details summary { cursor: pointer; margin: 1rem 0 0.5rem; color: var(--muted); }
+
+.linklike {
+  font: inherit; background: none; border: none; padding: 0;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+.button.small { padding: 0.35rem 0.75rem; font-size: 0.88rem; }

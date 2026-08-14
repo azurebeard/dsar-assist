@@ -1,0 +1,145 @@
+{
+  "version": "1.0.0",
+  "verified": "2026-08-02",
+  "note": "Standard DSAR scopings. Every template narrows an existing query and none replaces it. The vocabulary in the employment-file sweep is a matter of local practice — correct it here rather than in code. `verified` records the date each template's KQL was called against a real tenant; see verification/kql-property-probe-2026-08-02.md for the measurements, including the finding that mail-item properties silently exclude site content.",
+  "templates": [
+    {
+      "id": "time_window",
+      "name": "Time-boxed scope",
+      "purpose": "Limit the search to the period the request covers.",
+      "builder": "date_range",
+      "verified": "2026-08-02",
+      "guidance": "Mail items carry `sent`; SharePoint and OneDrive items carry `lastmodifiedtime`. This scopes on both, because scoping on `sent` alone silently drops every file in range — a miss a DSAR response cannot afford.",
+      "inputs": [
+        {
+          "name": "start",
+          "label": "From",
+          "kind": "date",
+          "placeholder": "2025-01-01",
+          "help": "Leave blank for no lower bound."
+        },
+        {
+          "name": "end",
+          "label": "To",
+          "kind": "date",
+          "placeholder": "2026-01-01",
+          "help": "Leave blank for no upper bound."
+        }
+      ]
+    },
+    {
+      "id": "workload",
+      "name": "Workload split",
+      "purpose": "Count one workload at a time, to see where the effort and the cost actually are.",
+      "builder": "choice",
+      "verified": "2026-08-02",
+      "fixed_terms": ["kind"],
+      "guidance": "Run this once per workload and compare the counts before committing to an export. Because this tool reports counts rather than content, a per-workload breakdown is the cheapest planning information available — and export bills by volume on E3. Measured on a real estate, meetings were 28 of 40 hits: a naive count is often dominated by calendar items.",
+      "caution": "`kind:` is a mail-item property. Measured 2026-08-02: adding any `kind:` clause reduced the site count to zero, including on a query that touches three sites — so this counts mailbox content only and silently excludes SharePoint and OneDrive. Use it to split the mail workload, never to conclude how much there is in total.",
+      "inputs": [
+        {
+          "name": "kind",
+          "label": "Mailbox workload",
+          "kind": "choice",
+          "required": true,
+          "options": [
+            { "value": "email", "label": "Email" },
+            { "value": "im", "label": "Teams / chat" },
+            { "value": "meetings", "label": "Meetings" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "employment_file",
+      "name": "Employment file",
+      "purpose": "The vocabulary an employment-dispute DSAR usually turns on.",
+      "builder": "phrase_or",
+      "verified": "2026-08-02",
+      "fixed_terms": [
+        "grievance",
+        "disciplinary",
+        "capability",
+        "performance improvement",
+        "appraisal",
+        "probation",
+        "sickness absence",
+        "redundancy",
+        "settlement agreement"
+      ],
+      "guidance": "By far the most common context for a DSAR is an employment dispute. These are free-text clauses, so they catch a document discussing the subject even where the subject was never a participant — which is the class of item a participants-only search cannot reach.",
+      "caution": "This narrows to items using this vocabulary. It is a triage aid, not the whole response: a DSAR covers all personal data, not only the contested part.",
+      "inputs": [
+        {
+          "name": "terms",
+          "label": "Additional terms",
+          "kind": "terms",
+          "placeholder": "restructure, whistleblowing",
+          "help": "Comma or newline separated. Local vocabulary matters — a policy name or an internal scheme title often finds more than the generic terms do."
+        }
+      ]
+    },
+    {
+      "id": "privilege_triage",
+      "name": "Privilege triage",
+      "purpose": "Surface candidates for the legal-privilege exemption.",
+      "builder": "phrase_or",
+      "verified": "2026-08-02",
+      "fixed_terms": [
+        "legally privileged",
+        "legal advice",
+        "without prejudice",
+        "subject to privilege",
+        "attorney-client"
+      ],
+      "guidance": "Add your legal team's address or domain to catch correspondence that never uses the words. Addresses become `participants:` clauses automatically.",
+      "caution": "This finds candidates. It does not decide privilege, and nothing here should be withheld on the strength of a keyword match — the exemption is a legal judgement with a documented rationale.",
+      "inputs": [
+        {
+          "name": "terms",
+          "label": "Legal contacts or extra terms",
+          "kind": "terms",
+          "placeholder": "legal@example.com, counsel",
+          "help": "Comma or newline separated."
+        }
+      ]
+    },
+    {
+      "id": "third_party",
+      "name": "Third-party co-occurrence",
+      "purpose": "Items involving both the subject and someone else — the redaction workload.",
+      "builder": "people_or",
+      "verified": "2026-08-02",
+      "guidance": "In a grievance or a dispute this is the awkward set: material that is the subject's personal data and somebody else's at the same time. Sizing it early tells you how much redaction the response actually needs.",
+      "caution": "Third-party data is not automatically exempt. The test is whether disclosure is reasonable in the circumstances, which is a decision per item and not a property of this search.",
+      "inputs": [
+        {
+          "name": "people",
+          "label": "Other party",
+          "kind": "terms",
+          "required": true,
+          "placeholder": "alex.taylor@example.com, Alex Taylor",
+          "help": "Names and addresses, comma separated. An address becomes a `participants:` clause; a name becomes a free-text mention."
+        }
+      ]
+    },
+    {
+      "id": "attachments",
+      "name": "Attachments and file types",
+      "purpose": "Size the attachment volume before committing to an export.",
+      "builder": "filetypes",
+      "guidance": "Export is the one operation that bills on E3, and it bills by volume. Attachments are usually where that volume is.",
+      "caution": "Like `kind:`, this behaved as a mail-item property when measured on 2026-08-02 — the site count went to zero. Treat the result as an attachment count within mailboxes, not a file count across the estate.",
+      "inputs": [
+        {
+          "name": "filetypes",
+          "label": "File types",
+          "kind": "filetypes",
+          "required": true,
+          "placeholder": "pdf, docx, xlsx",
+          "help": "Letters and digits only. A file type is not quoted in KQL, so it is the one value that cannot be made safe by quoting — anything else is refused."
+        }
+      ]
+    }
+  ]
+}
