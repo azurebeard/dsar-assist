@@ -69,10 +69,12 @@ anything that will not start.
 | 2 · Graph as source of truth | ✅ case list rebuilt from Graph — **nothing travels between machines** |
 | 3 · Audit trail | ✅ hash-chained, tamper-evident, no subject data |
 | 4 · Write path | ✅ create case → expand → review KQL → search → delta → export handoff |
-| 5 · Hosted | ✗ designed, unbuilt (B-03) |
+| 5 · Hosted | ✗ designed, unbuilt (B-03) — **start with the FIC spike** |
 
-**211 tests, `mypy --strict` clean, CI green.** Multi-arch image, non-root
-uid 10001, read-only root, no pip, zero fixable High/Critical.
+**239 tests, `mypy --strict` clean, CI green.** Multi-arch image (amd64 +
+arm64, built in CI), **distroless runtime** — no shell, no package manager, no
+coreutils — non-root uid 10001, read-only root. **Zero High, zero Critical**:
+B-08 took it from 179 findings to 19, none fixable, none above Medium.
 
 ### Documents worth reading, in order
 
@@ -158,7 +160,6 @@ and 50 that afternoon. Re-run the pre-run on the day and quote what you get.
 |---|---|---|
 | **B-04** | **Prove CAE is negotiated** — `cp1` is declared, but whether the STS agreed is only readable from `xms_cc` on an issued token. **Until observed, do not claim near-real-time revocation** | 1 hour, one sign-in |
 | **B-05** | **CA03 decision.** Requiring a compliant device on the *desktop* app hard-blocks a container on an unmanaged Linux box, including this workstation. Recommendation: enforce for hosted, report-only for desktop | a decision |
-| **B-08** | Distroless — closes 4 unfixable Criticals; plan in the last message | half a day |
 | **B-03** | Hosted mode — **start with the FIC spike**, it gates the rest | 2–3 days |
 
 Branch protection is deliberately open (admin bypass) for development speed.

@@ -1,8 +1,8 @@
 # WS10 Security Review — B-08, distroless runtime
 
 **Date:** 2026-08-14 · **Scope:** the base image change and its guards
-**Verdict:** **APPROVED**, conditional on CI's multi-arch job passing. One
-finding raised and closed during the review; one condition, stated below.
+**Verdict:** **APPROVED.** The condition below was met on run `187a9f0`.
+One finding raised and closed during the review.
 
 Measurement and trade-offs: `B-08-distroless-2026-08-14.md`. This assesses the
 security consequences only.
@@ -74,7 +74,19 @@ to fail.
 
 ---
 
-## Condition
+## Condition — met
+
+**Satisfied 2026-08-14 on CI run `187a9f0`:** `Build (multi-arch)` succeeded
+for `linux/amd64,linux/arm64`, and every container check ran and passed —
+no shell on four paths, no package installer, uid 10001, `doctor` offline,
+serving under the full hardening flag set with security headers, and
+**`Trivy — fixable vulnerabilities and secrets (blocking)` executed and
+passed**. That last one matters specifically: it had been *skipped* behind an
+earlier failure in the same job, which is the precise shape of the mistake
+recorded in `HANDOVER.md` §7 — a verdict recorded while its blocking check
+never ran.
+
+The original condition, kept for the record:
 
 **arm64 is unproven.** This workstation has no arm64 binfmt registration, so
 neither the old nor the new Dockerfile builds arm64 locally — a host
@@ -103,7 +115,7 @@ hold** and the change is reverted rather than patched under time pressure.
 
 ## Verdict
 
-**APPROVED**, conditional on the multi-arch CI job. 239 tests pass,
+**APPROVED**, condition met on run `187a9f0`. 239 tests pass,
 `mypy --strict` clean, the image builds, runs, serves under full hardening and
 scans clean of High and Critical. One finding raised and closed, and the guard
 that missed it was proven against the broken image rather than assumed.
