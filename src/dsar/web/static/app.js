@@ -22,7 +22,7 @@
   let state = {
     case_id: null, reference: null, canWrite: false,
     pollTimer: null, pollDelay: 10000, pollStarted: null, generated: null,
-    tickTimer: null, running: 0, total: 0,
+    tickTimer: null, running: 0, total: 0, statusTimer: null,
   };
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
@@ -55,15 +55,30 @@
   function clearError() { hide("error"); }
 
   // One live region for "what is happening now". `role="status"` +
-  // aria-live="polite" so it is announced rather than only seen — an operator
-  // running a screen reader gets the same eleven-minute wait everyone else does
-  // and deserves to be told about it.
+  // aria-live="polite" so it is announced rather than only seen.
+  //
+  // Two rules about how long it lives, both learned the hard way:
+  //
+  //   * A message with no spinner is transient and clears itself. "Case
+  //     created." is worth reading once; leaving it on screen through the next
+  //     three actions makes the region furniture rather than information.
+  //   * A sustained message belongs to the case view alone, because that is
+  //     the only place with something genuinely ongoing. Anywhere else, a
+  //     spinner that never resolves is a lie.
+  //
+  // And it is cleared on sign-out unconditionally. It previously survived,
+  // which on a shared machine meant the next person saw the last person's
+  // case progress on the sign-in screen.
   function status(text, busy) {
     const bar = $("status");
+    if (state.statusTimer) { clearTimeout(state.statusTimer); state.statusTimer = null; }
     if (!text) { bar.setAttribute("hidden", ""); return; }
     setText("status-text", text);
     $("status-spinner").toggleAttribute("hidden", !busy);
     bar.removeAttribute("hidden");
+    if (!busy) {
+      state.statusTimer = setTimeout(() => status(null), 4000);
+    }
   }
 
   // Disables the button for the duration and restores its label afterwards.
@@ -115,11 +130,25 @@
   // --------------------------------------------------------- identity
 
   function renderSignedOut() {
+    // Everything belonging to the previous session goes, not just the view.
+    // A timer or a status line that outlives a sign-out shows one operator
+    // something about another's work.
+    if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+    stopTicking();
+    status(null);
+    state.case_id = null;
+    state.reference = null;
+    state.generated = null;
+    state.running = 0;
+    state.total = 0;
+    state.canWrite = false;
+
     $("identity").replaceChildren(el("span", "not signed in", "muted"));
     hide("nav");
     for (const section of document.querySelectorAll(".view")) {
       section.setAttribute("hidden", "");
     }
+    clearError();
     show("signed-out");
   }
 
@@ -462,6 +491,13 @@
 
   function renderWaiting() {
     if (!state.running) return;
+    if ($("view-case").hasAttribute("hidden")) {
+      // The view moved on. Stop rather than narrating a page nobody is looking
+      // at — and stop the clock with it.
+      stopTicking();
+      status(null);
+      return;
+    }
     setText("poll-note",
       state.running + " of " + state.total + " estimate" +
       (state.total === 1 ? "" : "s") + " still running \u2014 " + elapsed() +

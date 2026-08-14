@@ -145,3 +145,22 @@ def test_no_estimation_duration_is_claimed_in_the_ui(client: TestClient) -> None
         text = client.get(path).text.lower()
         for claim in ("eleven minutes", "11 minutes", "cold index"):
             assert claim not in text, f"{claim!r} still in {path}"
+
+
+def test_signing_out_tears_down_the_previous_session(client: TestClient) -> None:
+    """A timer or status line that outlives a sign-out shows one operator
+    something about another's work — on a shared machine, the next person saw
+    the last person's case progress on the sign-in screen."""
+    script = client.get("/app.js").text
+    signed_out = script.split("function renderSignedOut()", 1)[1].split("\n  }", 1)[0]
+    for teardown in ("clearTimeout(state.pollTimer)", "stopTicking()", "status(null)"):
+        assert teardown in signed_out, f"renderSignedOut does not {teardown}"
+    assert "state.case_id = null" in signed_out
+
+
+def test_a_sustained_status_belongs_to_the_case_view(client: TestClient) -> None:
+    """A spinner that never resolves is a lie anywhere the work is not ongoing."""
+    script = client.get("/app.js").text
+    assert 'hasAttribute("hidden")' in script
+    # Non-busy messages clear themselves rather than becoming furniture.
+    assert "setTimeout(() => status(null), 4000)" in script
