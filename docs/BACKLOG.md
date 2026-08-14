@@ -244,6 +244,21 @@ stopped being true.
 
 ---
 
+## B-11 · Six Dependabot pull requests, now honestly evaluable
+
+**Size:** a review each · **Unblocked:** 2026-08-14
+
+They were red for a reason unrelated to the bumps. With the secret scan fixed
+they are green and can be judged on their merits. `actions/checkout` 4.2.2 →
+7.0.1 was confirmed green end to end including the container smoke test.
+
+Two want more than a glance: **mypy 1.20.2 → 2.3.0** is a major bump on a
+`--strict` codebase, and **python 3.13-slim → 3.14-slim** needs the runtime
+base image digest re-pinned by hand, since the pin is by digest and not by tag
+on purpose.
+
+---
+
 ## B-10 · Comparability warning — the two residuals
 
 **Size:** small · **Raised by:** `WS10-review-comparability-2026-08-14`
@@ -289,6 +304,14 @@ covered.
 
 ## Closed
 
+- **Every pull request failed the secret scan** with "Resource not accessible
+  by integration". On a `pull_request` event gitleaks asks the API which
+  commits the PR contains; the workflow granted `contents: read` and nothing
+  else. All six Dependabot bumps were red for a reason unrelated to the bump,
+  which is worse than noise — a bump that genuinely breaks something looked
+  identical to one that did not. Fixed with `pull-requests: read` (read, never
+  write: the job runs pull request content) and confirmed on a rebased PR
+- **Publish had never once succeeded** — see B-07 below
 - **The delta reading backwards** — a narrowing applied to one query and not
   the other measured the narrowing rather than the expansion. Measured on
   DSAR-2026-0418a: naive 40 items and one site, expanded 4 and none. Closed two

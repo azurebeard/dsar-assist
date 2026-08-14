@@ -183,6 +183,10 @@ Recorded because a handover listing only successes is not a handover.
 - **`WS10 Approved` was recorded before the image had ever been scanned.** The
   container job had failed earlier, so the blocking Trivy step never ran. Block
   a verdict on every check having *executed*.
+- **I blamed the wrong thing for the secret scan failing every pull request,**
+  confidently, from reading the code. The fix shipped, the job failed
+  identically, and the actual cause — a missing `pull-requests: read` — was in
+  the run log the whole time. Read the failure before theorising about it.
 - **I recorded B-07 as done without watching the Publish workflow finish.** It
   failed all three times it ever ran: GitHub's attestation store refuses
   user-owned private repositories. The image was pushed; cosign signing and its
