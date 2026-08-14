@@ -21,10 +21,13 @@
 
   let state = {
     case_id: null, reference: null, canWrite: false,
-    pollTimer: null, pollDelay: 10000, pollStarted: null, generated: null,
+    pollTimer: null, pollStarted: null, generated: null,
     tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
     nextPollAt: null,
   };
+
+  //: How long between automatic checks. See schedulePoll() for why it is flat.
+  const POLL_INTERVAL_MS = 60000;
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
   // same-origin GET, so an all-POST surface is what lets the server enforce
@@ -452,7 +455,6 @@
   async function openCase(item) {
     state.case_id = item.case_id;
     state.pollStarted = Date.now();
-    state.pollDelay = 10000;
     state.running = 0;
     state.total = 0;
     setText("case-title", item.reference || item.display_name || "Case");
@@ -462,15 +464,21 @@
     if (!done) schedulePoll();
   }
 
-  // The ladder: brisk while an estimate might land, then patient. Estimation
-  // timing is wildly variable, so the elapsed counter matters more than the
-  // interval — a screen that has said "running" for several minutes with no
-  // clock on it is indistinguishable from a screen that has hung. The counter
-  // is ticked separately in startTicking(), because this ladder ends at a
-  // minute and a stale clock is the thing being fixed.
+  // A flat sixty seconds, not a ladder.
+  //
+  // Every poll spends the operator's own Graph token, and Purview throttles the
+  // ACCOUNT rather than the process — so a call made here is taken from the
+  // operator's other tools. An estimate takes minutes; checking every ten
+  // seconds for the first minute buys at most a few seconds of earlier notice
+  // and costs six times the calls to find out nothing has changed.
+  //
+  // Impatience is served by "Refresh now" instead, which is one deliberate call
+  // rather than a standing cost, and by the countdown that says when the next
+  // one lands. The first read is immediate on opening the case, so the interval
+  // only governs the wait AFTER something is already on screen.
   function schedulePoll() {
     if (state.pollTimer) clearTimeout(state.pollTimer);
-    state.nextPollAt = Date.now() + state.pollDelay;
+    state.nextPollAt = Date.now() + POLL_INTERVAL_MS;
     state.pollTimer = setTimeout(async () => {
       state.nextPollAt = null;
       const done = await refreshCase();
@@ -478,9 +486,8 @@
         state.pollTimer = null;
         return;
       }
-      state.pollDelay = Math.min(state.pollDelay * 3, 60000);
       schedulePoll();
-    }, state.pollDelay);
+    }, POLL_INTERVAL_MS);
   }
 
   function startTicking() {
@@ -540,7 +547,7 @@
   $("refresh-case").addEventListener("click", async () => {
     await withBusy($("refresh-case"), "Refreshing\u2026", async () => {
       const done = await refreshCase();
-      if (!done) { state.pollDelay = 10000; schedulePoll(); }
+      if (!done) schedulePoll();
     });
   });
 

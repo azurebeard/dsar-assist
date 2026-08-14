@@ -216,6 +216,18 @@ def test_countdown_to_the_next_check(client: TestClient) -> None:
     pause is indistinguishable from a stall."""
     script = client.get("/app.js").text
     assert "next check in " in script
-    assert "state.nextPollAt = Date.now() + state.pollDelay" in script
+    assert "state.nextPollAt = Date.now() + POLL_INTERVAL_MS" in script
     # And it must not outlive the work it counts towards.
     assert script.count("state.nextPollAt = null") >= 3
+
+
+def test_polling_is_a_flat_interval_not_a_ladder(client: TestClient) -> None:
+    """Every poll spends the operator's own Graph token, and Purview throttles
+    the account rather than the process — so a call made here is taken from
+    their other tools. A ladder starting at ten seconds costs six times the
+    calls to learn nothing has changed."""
+    script = client.get("/app.js").text
+    assert "const POLL_INTERVAL_MS = 60000;" in script
+    # No back-off arithmetic left behind to drift from the constant.
+    assert "pollDelay" not in script
+    assert "* 3" not in script
