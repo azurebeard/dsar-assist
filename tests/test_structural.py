@@ -137,13 +137,78 @@ def test_purview_download_resource_never_named() -> None:
     assert _scan(re.escape(app_id)) == []
 
 
-def test_no_download_or_preview_verbs_in_graph_layer() -> None:
-    """No Graph operation may be named for downloading or previewing."""
-    forbidden = ("download", "preview", "exportResult" + "/content")
-    hits: list[str] = []
-    for word in forbidden:
-        hits += _scan(rf"\b{re.escape(word)}\b", flags=re.I, files=_python_files("src/dsar/graph"))
-    assert hits == []
+def test_no_download_or_preview_operation_exists() -> None:
+    """No permitted operation may download or preview item content.
+
+    Checked against the operations table and the callable surface rather than
+    against free text. An earlier version scanned the whole Graph package for
+    the words, which failed on prose explaining that the tool does *not*
+    download — a test that forbids describing the guarantee is a test that
+    pressures you into deleting the explanation.
+
+    What matters is that no operation exists, so that is what is asserted: no
+    table key, no URL template, and no public method name contains either verb.
+    """
+    from dsar.graph.operations import OPERATIONS, GraphOperations
+
+    forbidden = ("download", "preview", "content")
+    offenders: list[str] = []
+
+    for key, operation in OPERATIONS.items():
+        haystack = f"{key} {operation.template}".lower()
+        offenders += [f"OPERATIONS[{key!r}]" for word in forbidden if word in haystack]
+
+    for name in dir(GraphOperations):
+        if name.startswith("_"):
+            continue
+        offenders += [
+            f"GraphOperations.{name}" for word in forbidden if word in name.lower()
+        ]
+
+    assert offenders == []
+
+
+def test_operations_table_is_the_documented_set() -> None:
+    """Eleven operations, named. Adding one is a visible diff — the point of
+    the table."""
+    from dsar.graph.operations import OPERATIONS
+
+    assert set(OPERATIONS) == {
+        "list_cases",
+        "create_case",
+        "get_case",
+        "list_searches",
+        "create_search",
+        "run_search",
+        "get_statistics",
+        "list_operations",
+        "get_operation",
+        "initiate_export",
+        "find_users",
+    }
+    # Every entry's key must match its own name, or the table lies about itself.
+    assert all(key == op.name for key, op in OPERATIONS.items())
+
+
+def test_no_graph_path_is_caller_supplied() -> None:
+    """Every request path comes from the table, never from an argument.
+
+    This is what makes the allowlist an allowlist. A method that accepted a
+    path would turn the table into documentation.
+    """
+    import ast
+
+    source = (REPO_ROOT / "src/dsar/graph/operations.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+            args = {a.arg for a in node.args.args} | {
+                a.arg for a in node.args.kwonlyargs
+            }
+            if {"path", "url", "template", "endpoint"} & args:
+                offenders.append(f"{node.name}:{node.lineno}")
+    assert offenders == []
 
 
 # ------------------------------------------------------------------ no secrets
