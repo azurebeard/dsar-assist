@@ -122,3 +122,26 @@ def test_every_submit_control_has_a_busy_path(client: TestClient) -> None:
 
 def test_reduced_motion_is_respected(client: TestClient) -> None:
     assert "prefers-reduced-motion" in client.get("/style.css").text
+
+
+def test_elapsed_counter_ticks_independently_of_the_graph_poll(
+    client: TestClient,
+) -> None:
+    """The Graph poll backs off to 60s. Without a separate ticker the elapsed
+    figure is stale for up to a minute — which is the interval over which a
+    reader decides the page has stopped."""
+    script = client.get("/app.js").text
+    assert "startTicking" in script and "stopTicking" in script
+    assert "setInterval(renderWaiting, 1000)" in script
+    # Every exit from the case view must stop it, or it writes into a hidden
+    # element and the next case inherits a running clock.
+    assert script.count("stopTicking()") >= 4
+
+
+def test_no_estimation_duration_is_claimed_in_the_ui(client: TestClient) -> None:
+    """The eleven-minute figure was measured once, on one tenant. Quoting it in
+    the interface turns a single observation into a promise."""
+    for path in ("/", "/app.js"):
+        text = client.get(path).text.lower()
+        for claim in ("eleven minutes", "11 minutes", "cold index"):
+            assert claim not in text, f"{claim!r} still in {path}"

@@ -130,10 +130,10 @@ class Workflow:
     def run_estimate(self, case_id: str, search_id: str) -> None:
         """Start an estimate. Statistics arrive later, by polling.
 
-        Estimation timing is wildly variable — around eleven minutes on a first
-        run against a cold index, under a minute afterwards. Do not create a
-        search live in a demonstration and wait for it; run them beforehand and
-        present completed statistics.
+        Estimation timing is wildly variable and not worth quoting a figure
+        for — it depends on the tenant, the index state and how much Purview
+        has to do. Do not create a search live in a demonstration and wait for
+        it; run them beforehand and present completed statistics.
         """
         self._require_write("Running an estimate")
         self._ops.run_search(case_id=case_id, search_id=search_id)

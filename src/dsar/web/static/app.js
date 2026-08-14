@@ -22,6 +22,7 @@
   let state = {
     case_id: null, reference: null, canWrite: false,
     pollTimer: null, pollDelay: 10000, pollStarted: null, generated: null,
+    tickTimer: null, running: 0, total: 0,
   };
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
@@ -96,9 +97,10 @@
     for (const tab of document.querySelectorAll(".tab")) {
       tab.classList.toggle("active", tab.dataset.view === name);
     }
-    if (state.pollTimer && name !== "case") {
-      clearTimeout(state.pollTimer);
-      state.pollTimer = null;
+    if (name !== "case") {
+      if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+      stopTicking();
+      state.running = 0;
     }
     status(null);
   }
@@ -417,6 +419,8 @@
     state.case_id = item.case_id;
     state.pollStarted = Date.now();
     state.pollDelay = 10000;
+    state.running = 0;
+    state.total = 0;
     setText("case-title", item.reference || item.display_name || "Case");
     showView("case");
 
@@ -424,11 +428,12 @@
     if (!done) schedulePoll();
   }
 
-  // The ladder: brisk while an estimate might land, then patient. Estimation is
-  // wildly variable — around eleven minutes against a cold index, under a
-  // minute after — so the elapsed counter matters more than the interval. A
-  // screen that has said "running" for nine minutes with no clock on it is
-  // indistinguishable from a screen that has hung.
+  // The ladder: brisk while an estimate might land, then patient. Estimation
+  // timing is wildly variable, so the elapsed counter matters more than the
+  // interval — a screen that has said "running" for several minutes with no
+  // clock on it is indistinguishable from a screen that has hung. The counter
+  // is ticked separately in startTicking(), because this ladder ends at a
+  // minute and a stale clock is the thing being fixed.
   function schedulePoll() {
     if (state.pollTimer) clearTimeout(state.pollTimer);
     state.pollTimer = setTimeout(async () => {
@@ -440,6 +445,29 @@
       state.pollDelay = Math.min(state.pollDelay * 3, 60000);
       schedulePoll();
     }, state.pollDelay);
+  }
+
+  function startTicking() {
+    stopTicking();
+    // One second, and it touches only text already on the page — no request,
+    // no token spent. The Graph poll backs off to a minute, so without this the
+    // counter is stale for up to a minute, which is the interval over which a
+    // reader decides the page has stopped.
+    state.tickTimer = setInterval(renderWaiting, 1000);
+  }
+
+  function stopTicking() {
+    if (state.tickTimer) { clearInterval(state.tickTimer); state.tickTimer = null; }
+  }
+
+  function renderWaiting() {
+    if (!state.running) return;
+    setText("poll-note",
+      state.running + " of " + state.total + " estimate" +
+      (state.total === 1 ? "" : "s") + " still running \u2014 " + elapsed() +
+      " so far. This page updates on its own; you can leave it.");
+    show("poll-note");
+    status("Estimating \u2014 " + elapsed() + " elapsed", true);
   }
 
   function elapsed() {
@@ -457,6 +485,7 @@
 
   $("back").addEventListener("click", () => {
     if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+    stopTicking();
     showView("requests");
     loadRequests();
   });
@@ -496,21 +525,19 @@
 
       renderDelta(rows);
 
-      const running = rows.filter((s) => !(s.statistics || {}).complete).length;
-      if (rows.length && running) {
-        setText("poll-note",
-          running + " of " + rows.length + " estimate" +
-          (rows.length === 1 ? "" : "s") + " still running \u2014 " + elapsed() +
-          " so far. Purview takes around eleven minutes on a cold index and " +
-          "under a minute afterwards. This page updates on its own; you can " +
-          "leave it.");
-        show("poll-note");
-        status("Estimating \u2014 " + elapsed() + " elapsed", true);
+      state.running = rows.filter((s) => !(s.statistics || {}).complete).length;
+      state.total = rows.length;
+
+      if (rows.length && state.running) {
+        renderWaiting();
+        startTicking();
       } else if (rows.length) {
+        stopTicking();
         setText("poll-note", "All estimates complete after " + elapsed() + ".");
         show("poll-note");
         status("Estimates complete.", false);
       } else {
+        stopTicking();
         hide("poll-note");
         status(null);
       }
