@@ -144,10 +144,27 @@ jobs:
           b="$(docker run --rm --entrypoint python dsar-assist:ci -m dsar --version)"
           [ "$a" = "$b" ] || { echo "entry points disagree in the image"; exit 1; }
 
+      # Asked of the interpreter rather than of `id`, because the runtime image
+      # is distroless and carries no coreutils. That absence is the point of
+      # the image, so the check adapts to it rather than the image to the check.
       - name: Runs as non-root
         run: |
-          uid="$(docker run --rm --entrypoint id dsar-assist:ci -u)"
+          uid="$(docker run --rm --entrypoint python dsar-assist:ci -c 'import os; print(os.getuid())')"
           [ "$uid" = "10001" ] || { echo "expected uid 10001, got $uid"; exit 1; }
+
+      # Distroless is not a claim to make without checking. A shell reachable
+      # from the image is the whole surface this base was chosen to remove, and
+      # a future edit that copies one in would otherwise go unnoticed.
+      - name: No shell in the runtime image
+        run: |
+          for shell in /bin/sh /bin/bash /usr/bin/sh /usr/bin/bash; do
+            if docker run --rm --entrypoint python dsar-assist:ci \
+                 -c "import os,sys; sys.exit(0 if os.path.exists('$shell') else 1)"; then
+              echo "$shell exists in the runtime image"
+              exit 1
+            fi
+          done
+          echo "no shell present"
 
       - name: Keyring dependency is absent from the image
         run: |
@@ -156,14 +173,25 @@ jobs:
           [ "$out" = "None" ] || { echo "msal-extensions is present: $out"; exit 1; }
 
       # A runtime image with no package installer cannot fetch and install
-      # code. It also removes pip's vendored msgpack and setuptools, which were
-      # the only two fixable High findings Trivy reported and were unfixable by
-      # any change to pyproject.toml.
+      # code.
+      #
+      # Asked of the filesystem, not only of the import system. The venv never
+      # had pip, so `find_spec` returned None and kept returning None while the
+      # move to distroless quietly reintroduced pip 26.0 under /opt/python —
+      # a python-build-standalone interpreter ships one. Trivy caught it; this
+      # check had said nothing, because it was asking the wrong question.
       - name: No package installer in the runtime image
         run: |
           out="$(docker run --rm --entrypoint python dsar-assist:ci -c \
+            'import glob
+             found = [p for root in ("/opt/python", "/app", "/usr/local")
+                        for pat in ("pip", "pip3*", "ensurepip")
+                        for p in glob.glob(root + "/**/" + pat, recursive=True)]
+             print("\n".join(found) or "0")')"
+          [ "$out" = "0" ] || { echo "a package installer is present:"; echo "$out"; exit 1; }
+          out="$(docker run --rm --entrypoint python dsar-assist:ci -c \
             'import importlib.util; print(importlib.util.find_spec("pip"))')"
-          [ "$out" = "None" ] || { echo "pip is present in the runtime image"; exit 1; }
+          [ "$out" = "None" ] || { echo "pip is importable in the runtime image"; exit 1; }
 
       - name: Doctor passes offline
         run: |

@@ -793,3 +793,54 @@ def test_the_front_end_never_assigns_html() -> None:
                 f"{path.name}:{number} {word}" for word in forbidden if word in line
             ]
     assert offenders == []
+
+
+def test_the_interpreter_version_is_decided_in_one_place() -> None:
+    """Two stages that must agree on a Python minor version, and nothing
+    checking, is a silent failure waiting for a dependency bump.
+
+    It arrived on schedule. Dependabot's `python:3.13-slim` -> `3.14-slim`
+    (PR #1) changed the runtime base and not the builder, so the venv was built
+    at 3.13 into `lib/python3.13/site-packages` and a 3.14 interpreter did not
+    look there. The whole failure was one line: `No module named 'dsar'`.
+
+    The runtime image now carries an interpreter copied from the builder, so
+    there is one version and it is named once, in `PYTHON_VERSION`. This
+    asserts that stays true — that no `FROM` reintroduces a second interpreter
+    whose version has to be kept in step by hand.
+    """
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    versions = set(re.findall(r"^ARG PYTHON_VERSION=(.+)$", dockerfile, re.M))
+    assert len(versions) == 1, f"expected exactly one PYTHON_VERSION, got {versions}"
+
+    # A base image whose tag names a Python version is a second, independent
+    # decision about which interpreter runs.
+    froms = [line for line in dockerfile.splitlines() if line.startswith("FROM ")]
+    versioned = [line for line in froms if re.search(r"python[:/]?3\.\d+", line)]
+    assert versioned == [], (
+        "a base image tag names a Python version, so two places now decide "
+        f"which interpreter runs: {versioned}"
+    )
+
+
+def test_the_runtime_image_has_no_shell() -> None:
+    """The base is distroless and that is load-bearing: it is what removed all
+    23 unfixable HIGH and CRITICAL findings (B-08).
+
+    Asserted against the Dockerfile because the suite must not require Docker.
+    CI checks the built image directly, which is the stronger form of the same
+    check — see "No shell in the runtime image".
+    """
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    runtime = dockerfile.split("# ------")[-1]
+    final_from = [line for line in dockerfile.splitlines() if line.startswith("FROM ")][-1]
+    assert "distroless" in final_from, f"runtime base is not distroless: {final_from}"
+
+    # `RUN` in the runtime stage cannot work without a shell, and a `SHELL`
+    # directive or a copied-in busybox would put one back.
+    for forbidden in ("RUN ", "SHELL ", "busybox"):
+        assert forbidden not in runtime, (
+            f"{forbidden.strip()!r} in the runtime stage — there is no shell "
+            f"for it, and adding one undoes B-08"
+        )

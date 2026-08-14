@@ -1,79 +1,82 @@
 # syntax=docker/dockerfile:1
 #
-# One image, two modes. An operator runs it on their laptop; the same digest
-# runs on Azure Container Apps.
+# B-08 EVALUATION ARTEFACT. Measurement and decision:
+# docs/B-08-distroless-2026-08-14.md
 #
-# Build multi-arch. linux/arm64 is not optional — Apple Silicon is where the
-# predecessor's demo failed:
-#   docker buildx build --platform linux/amd64,linux/arm64 \
-#     --sbom=true --provenance=true -t <ref> --push .
-
-# Both stages are pinned by digest, not by tag. A tag can be repointed at a
-# different image without any change to this repository, so a tag-only pin
-# means the build is not reproducible and an altered upstream enters the supply
-# chain silently. That matters more than usual here, because reproducibility is
-# this project's reason for existing. Dependabot's docker ecosystem updates
-# digest pins, so this does not freeze the images (WS10 SEC-M-04).
+# `python:3.13-slim` carries 23 HIGH and CRITICAL findings, 4 of them Critical
+# and none of them fixable, all in packages this application never calls: perl,
+# util-linux, ncurses, gzip. Measured 2026-08-14.
+#
+# The interpreter is the interesting part. `gcr.io/distroless/python3-debian12`
+# ships Debian's python3.11, so the runtime would choose the interpreter
+# version and a venv built against anything else silently fails to import —
+# which is exactly how the python 3.14 bump (PR #1) broke. This installs a
+# python-build-standalone interpreter in the builder, at a version chosen here,
+# and copies it. One place decides the version instead of two that must agree.
 
 # ---------------------------------------------------------------- builder
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca AS builder
+FROM ghcr.io/astral-sh/uv:bookworm-slim@sha256:22334efe746f1b69217d455049b484d7b8cacfb2d5f42555580b62415a98e0a3 AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never
+    UV_PYTHON_INSTALL_DIR=/opt/python
+
+ARG PYTHON_VERSION=3.13
+
+# The interpreter that lands in the runtime image is the one the venv is built
+# against, because it is the same files. python-build-standalone carries its
+# own OpenSSL and libffi, so it does not need Debian's.
+RUN uv python install "${PYTHON_VERSION}"
 
 WORKDIR /app
 
-# Dependencies resolve from the lockfile alone, so this layer is cached until
-# the lockfile changes. `--frozen` fails loudly if the lock is stale rather
-# than silently re-resolving — a resolution that differs per build machine is
-# the class of failure this project exists to eliminate.
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    uv sync --frozen --no-dev --no-install-project --python "${PYTHON_VERSION}"
 
 COPY src/ ./src/
 COPY README.md ./
 
-# `--no-editable` genuinely installs the package, so /app/.venv/bin/dsar is a
-# real console script. An editable install would leave a .pth shim pointing at
-# a source tree the runtime image does not carry, which is exactly how the
-# predecessor shipped documentation for a command nobody could run.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable
+    uv sync --frozen --no-dev --no-editable --python "${PYTHON_VERSION}"
+
+# Proves the interpreter works before it is copied somewhere with no shell to
+# diagnose it in. ssl and hashlib are the two that fail when a standalone build
+# is missing its bundled libraries, and they fail at import of `msal`.
+RUN /app/.venv/bin/python -c "import ssl, hashlib; print(ssl.OPENSSL_VERSION)" \
+ && /app/.venv/bin/dsar --version
+
+# Remove the package installer. A python-build-standalone interpreter ships
+# pip, so the property the previous image had — no installer in the runtime —
+# was silently lost in the move to distroless, and the check that was supposed
+# to catch it looked only inside the venv, where pip never was. Trivy found
+# three findings against `pip 26.0` under /opt/python and that is what said so.
+#
+# Two reasons it goes, unchanged from before: nothing installs anything at
+# runtime, and an exploited process that cannot fetch and install code is a
+# materially smaller problem.
+RUN find /opt/python -maxdepth 5 \( -name 'pip' -o -name 'pip-*.dist-info' \
+        -o -name 'pip3' -o -name 'pip3.*' -o -name 'ensurepip' \) \
+        -exec rm -rf {} + \
+ && ! /app/.venv/bin/python -c "import pip" 2>/dev/null
+
+# There is no shell in the runtime stage, so there is no `RUN mkdir` and no
+# `RUN chown`. Every directory and every ownership has to be prepared here and
+# copied. A small thing on its own, and a fair sample of the migration.
+RUN mkdir -p /seed/var/lib/dsar/audit \
+ && chown -R 10001:10001 /seed/var/lib/dsar /app
 
 # ---------------------------------------------------------------- runtime
 #
-# python:3.13-slim rather than distroless, deliberately. The whole diagnostic
-# story of this tool is `docker run --entrypoint dsar <image> doctor`, and the
-# hosted operational story includes console exec. Distroless has no shell and
-# pins the interpreter to the image. With non-root, no build tools and a Trivy
-# gate in CI the security delta is small; revisit in hardening.
-FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+# `:latest` rather than `:nonroot`, so the uid stays 10001. The nonroot variant
+# is 65532, and the launchers, the Bicep and three tests all assert 10001 —
+# changing the uid to satisfy the base image would mean changing five things
+# that are correct for a reason that is cosmetic.
+FROM gcr.io/distroless/cc-debian12:latest@sha256:6e1871c34683dc9ee996d13084497783fd98ac0200213d0826625f4e9d4be1d0
 
-RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin dsar \
- && mkdir -p /var/lib/dsar/audit \
- && chown 10001:10001 /var/lib/dsar/audit \
- # Remove the system package installer. The application runs from
- # /app/.venv, which `uv sync --no-editable` populated at build time, and
- # nothing installs anything at runtime — /app/.venv/bin/python cannot even
- # import pip. Two consequences, both wanted:
- #
- #   1. It closes the only two fixable High findings Trivy reported against
- #      this image. Both were in pip's *vendored* tree (msgpack 1.1.2,
- #      setuptools 70.3.0) rather than in any dependency we chose, so they
- #      were unfixable by any change to pyproject.toml.
- #   2. A runtime image with no package installer means an exploited process
- #      cannot fetch and install code.
- #
- # The glob avoids hardcoding the interpreter's minor version, which changes
- # with the base image digest.
- && rm -rf /usr/local/lib/python3.*/site-packages/pip \
-           /usr/local/lib/python3.*/site-packages/pip-*.dist-info \
-           /usr/local/lib/python3.*/ensurepip \
-           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
-
-COPY --from=builder --chown=10001:10001 /app /app
+COPY --from=builder /opt/python /opt/python
+COPY --from=builder /app /app
+COPY --from=builder /seed/var /var
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -86,14 +89,12 @@ WORKDIR /app
 
 EXPOSE 8765
 
-# The audit trail dies with the container unless this is a mount. The launcher
-# mounts it; Container Apps uses the append-blob sink instead.
 VOLUME ["/var/lib/dsar/audit"]
 
+# Exec form, so it needs no shell — which is just as well, because there is
+# none. The absolute path rather than `python`, for the same reason.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import urllib.request,os,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('DSAR_PORT','8765')+'/healthz',timeout=2).status==200 else 1)"]
+    CMD ["/app/.venv/bin/python", "-c", "import urllib.request,os,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('DSAR_PORT','8765')+'/healthz',timeout=2).status==200 else 1)"]
 
-# The ENTRYPOINT *is* the console script, so every run of the product exercises
-# it. It cannot rot unnoticed.
-ENTRYPOINT ["dsar"]
+ENTRYPOINT ["/app/.venv/bin/dsar"]
 CMD ["up"]

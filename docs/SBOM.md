@@ -75,15 +75,27 @@ here, and reproducibility is this project's reason for existing.
 
 | Stage | Image | Digest |
 |---|---|---|
-| Builder | `ghcr.io/astral-sh/uv:python3.13-bookworm-slim` | `sha256:531f855b…44ca` |
-| Runtime | `python:3.13-slim` | `sha256:ffb752e1…e30a` |
+| Builder | `ghcr.io/astral-sh/uv:bookworm-slim` | `sha256:22334efe…e0a3` |
+| Runtime | `gcr.io/distroless/cc-debian12` | `sha256:6e1871c3…e1d0` |
+
+The runtime carries **no shell, no package manager and no coreutils**. The
+interpreter is a python-build-standalone CPython copied from the builder, so
+`ARG PYTHON_VERSION` is the single place that decides which interpreter runs —
+previously two base image tags had to agree, and nothing checked that they did
+(see `B-08-distroless-2026-08-14.md`).
 
 **pip is removed from the runtime image.** It is not needed — the venv is
-populated at build time — and its *vendored* tree carried the only two fixable
-High findings Trivy reported (`msgpack` 1.1.2, `setuptools` 70.3.0), neither of
-which any change to `pyproject.toml` could fix. A runtime image with no package
-installer also means an exploited process cannot fetch and install code. CI
-asserts pip stays absent.
+populated at build time — and a runtime image with no package installer means
+an exploited process cannot fetch and install code.
+
+It has been removed twice. On `python:3.13-slim` it was Debian's, whose
+*vendored* tree carried the only two fixable High findings Trivy reported
+(`msgpack` 1.1.2, `setuptools` 70.3.0), unfixable by any change to
+`pyproject.toml`. On distroless it came back, because a python-build-standalone
+interpreter ships its own — and the CI check missed it, because it asked
+`importlib.util.find_spec("pip")` and the venv never had pip. Trivy caught it.
+The check now looks at the filesystem as well, and was run against the
+pip-carrying image to confirm it discriminates.
 
 ---
 
@@ -106,10 +118,14 @@ supply chain of its own.
 | `uv lock --check` | CI | Yes |
 | Dependabot | pip, docker, actions | Opens PRs |
 
-**Current residual:** 23 unfixed findings, 4 Critical — `perl`, `ncurses`,
-`gzip` and related base-image packages with no available patch. Visible by
-design; the split exists so unpatchable findings are known rather than
-suppressed. B-08 (distroless) would remove most of this surface.
+**Current residual: 19 findings, 6 Medium and 13 Low, none Critical, none
+High, none fixable** — `libc6` (13), `libssl3` (2) and the gcc runtime. All are
+libraries a Python process genuinely needs.
+
+Before B-08 it was **179 findings, 4 Critical and 19 High**, in `perl-base`,
+`util-linux`, `ncurses` and `gzip` — packages this application never calls,
+with no patch available. Measured either side of the change on 2026-08-14; the
+numbers and the trade are in `B-08-distroless-2026-08-14.md`.
 
 ---
 

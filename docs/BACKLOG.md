@@ -246,7 +246,7 @@ stopped being true.
 
 ## B-11 · Six Dependabot pull requests, now honestly evaluable
 
-**Size:** a review each · **Unblocked:** 2026-08-14
+**Size:** a review each · **Unblocked:** 2026-08-14 · **Four merged**
 
 They were red for a reason unrelated to the bumps. With the secret scan fixed
 they are green and can be judged on their merits. `actions/checkout` 4.2.2 →
@@ -281,16 +281,27 @@ presented anywhere the queries are not visible beside it.
 
 ---
 
-## B-08 · Distroless evaluation
+## B-08 · Distroless ✅ DONE 2026-08-14
 
-**Size:** half a day
+Adopted. **179 findings → 19; 4 Critical and 19 High → zero**, measured either
+side with the same Trivy version and database. The full measurement, the costs
+and the two things it broke are in `B-08-distroless-2026-08-14.md`.
 
-`python:3.13-slim` was chosen because the diagnostic story is
-`docker run --entrypoint dsar <image> doctor` and the hosted operational story
-includes console exec — distroless has no shell. The report-only Trivy scan
-lists 23 unfixed findings, 4 Critical, all base-image packages with no
-available patch. Distroless would remove most of that surface. Re-evaluate
-against the cost to diagnosis.
+The original entry's objection — distroless has no shell, and the diagnostic
+story is `docker run --entrypoint dsar <image> doctor` — turned out to be about
+the fallback rather than the plan. `doctor`, `--version` and `python -m dsar`
+all run in the distroless image, verified. What is genuinely gone is
+`docker exec` and the Container Apps console.
+
+Two surprises worth carrying forward. **Size went up**, 215 MB to 226 MB, since
+a python-build-standalone interpreter is heavier than Debian's minimal one —
+the opposite of the usual claim. And **pip came back**, shipped inside that
+interpreter, while the CI check that should have caught it kept passing because
+it asked the import system and pip was never in the venv. Trivy found it.
+
+**arm64 remains unproven locally** — this workstation has no binfmt
+registration for it, and neither Dockerfile builds arm64 here. CI's multi-arch
+job is the check that matters on this change.
 
 ---
 
