@@ -309,6 +309,22 @@ on purpose.
 
 ---
 
+## B-12 · WS10 hosted — what is left, and it is all yours
+
+`docs/WS10-review-hosted-2026-08-14.md` · **APPROVED WITH CONDITIONS**.
+Everything in code, IaC and provisioning is closed. Four items remain and none
+of them can be fixed in this repository.
+
+| # | Item | Why it is yours |
+|---|---|---|
+| **SEC-M-02** | Conditional Access: phishing-resistant MFA and a sign-in frequency, scoped to both DSAR apps | B-05 arriving. Until then the app's 8h TTL **is** the session lifetime, and the threat model now says so |
+| **SEC-M-06** | Three standing `#EXT#` guest **Owners at tenant root** | Any of them can attach the managed identity to compute they control, or replace the image on a process holding live operator tokens. Tenant governance |
+| **SEC-M-03a** | Lock the immutability policy | Irreversible — retention can then only be extended, for the life of the account. A go-live gate, and worth recording the date |
+| **SEC-M-03b** | Log Analytics retention 90 → 2555 days | A real cost. The second copy currently expires 2465 days before the first |
+| **B-04** | Prove CAE is negotiated | One sign-in. Still the only evidence for `cp1` |
+
+---
+
 ## Not doing · A combined Auditor + Operator role
 
 **Asked 2026-08-14. Recommendation: no.**
@@ -396,6 +412,18 @@ covered.
   identical to one that did not. Fixed with `pull-requests: read` (read, never
   write: the job runs pull request content) and confirmed on a rebased PR
 - **Publish had never once succeeded** — see B-07 below
+- **SEC-H-01 — a rolling deployment ran two audit writers.** `maxReplicas: 1`
+  bounds a *revision*; a rolling update runs two, measured at 46s and 37s here.
+  Two writers produced duplicate sequence numbers and the verifier read that as
+  *"a record was removed or inserted here"* — not two valid chains as the Bicep
+  claimed, but one trail reading as tampered, permanently, under a 2555-day
+  policy. Closed with a conditional append and a rebuild-on-refusal
+- **SEC-M-01 — the no-credentials claim covered one registration and blocked
+  neither.** Both are now asserted and both carry an app management policy,
+  proven by trying to add a secret to each and being refused
+- **SEC-M-04, M-05, L-01, L-05** — account selection bound to the principal,
+  logout cookie deletable in hosted mode, a redirect URI for a route that does
+  not exist, and a blob listing that ignored its continuation marker
 - **The delta reading backwards** — a narrowing applied to one query and not
   the other measured the narrowing rather than the expansion. Measured on
   DSAR-2026-0418a: naive 40 items and one site, expanded 4 and none. Closed two
