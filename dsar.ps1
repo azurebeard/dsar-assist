@@ -18,15 +18,29 @@ $Port     = if ($env:DSAR_PORT)      { $env:DSAR_PORT }      else { '8765' }
 $AuditDir = if ($env:DSAR_AUDIT_DIR) { $env:DSAR_AUDIT_DIR } else { Join-Path $HOME '.dsar\audit' }
 $Runtime  = if ($env:DSAR_RUNTIME)   { $env:DSAR_RUNTIME }   else { 'auto' }
 
-function Test-Docker {
+# Docker being installed is not the same as the image being available. See the
+# comment in ./dsar: preferring Docker and then failing on a missing image turns
+# "Docker is installed" into a reason the tool does not start.
+function Test-Image {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
     docker info *> $null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    docker image inspect $Image *> $null
+    if ($LASTEXITCODE -eq 0) { return $true }
+    Write-Host "Pulling $Image..."
+    docker pull --quiet $Image *> $null
     return $LASTEXITCODE -eq 0
 }
 
 if ($Runtime -eq 'auto') {
-    if (Test-Docker) { $Runtime = 'docker' }
-    elseif (Get-Command uvx -ErrorAction SilentlyContinue) { $Runtime = 'uv' }
+    if (Test-Image) { $Runtime = 'docker' }
+    elseif (Get-Command uvx -ErrorAction SilentlyContinue) {
+        if (Get-Command docker -ErrorAction SilentlyContinue) {
+            Write-Host "$Image is not available; falling back to uv."
+            Write-Host "If the image is private, run: docker login ghcr.io"
+        }
+        $Runtime = 'uv'
+    }
     else {
         Write-Error @'
 Neither Docker nor uv is available on this machine.

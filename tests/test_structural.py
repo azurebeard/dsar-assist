@@ -721,3 +721,42 @@ def test_the_audit_record_cannot_carry_subject_data() -> None:
     assert not (fields & forbidden), f"audit record grew: {fields & forbidden}"
     # The subject appears as a pseudonym and in no other form.
     assert "subject_ref" in fields
+
+
+def test_every_action_is_pinned_to_a_commit_sha() -> None:
+    """A tag can be repointed at different code without any change here.
+
+    Not new — CI already did this — but the publish workflow signs and pushes
+    an artefact, so an unpinned action there has a longer reach than one that
+    merely runs tests.
+    """
+    unpinned: list[str] = []
+    for path in sorted((REPO_ROOT / ".github/workflows").glob("*.yml")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if not stripped.startswith(("- uses:", "uses:")):
+                continue
+            ref = stripped.split("uses:", 1)[1].strip()
+            if ref.startswith("./"):
+                continue
+            if "@" not in ref:
+                unpinned.append(f"{_rel(path)}:{lineno} {ref}")
+                continue
+            sha = ref.split("@", 1)[1].split()[0]
+            if len(sha) != 40 or not all(c in "0123456789abcdef" for c in sha):
+                unpinned.append(f"{_rel(path)}:{lineno} {ref}")
+    assert unpinned == []
+
+
+def test_the_launcher_does_not_treat_docker_as_available_by_default() -> None:
+    """Docker being installed is not the same as the image being pullable.
+
+    The launcher preferred Docker on `command -v docker` alone, and the default
+    image had never been published — so having Docker installed was a reason
+    the tool did not start. Both runtimes exist so that neither is a single
+    point of failure; this restores that.
+    """
+    for name in ("dsar", "dsar.ps1"):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        assert "docker image inspect" in text, f"{name} does not check for the image"
+        assert "docker pull" in text, f"{name} does not try to pull it"

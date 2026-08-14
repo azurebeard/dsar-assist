@@ -205,13 +205,25 @@ the multi-operator model is in scope.
 
 ---
 
-## B-07 · Supply chain — SBOM and signing
+## B-07 · Supply chain — SBOM and signing ✅ DONE 2026-08-14
 
-**Size:** half a day · **Raised by:** OWASP A08
+`.github/workflows/publish.yml`: multi-arch build pushed to ghcr.io with an
+SBOM and provenance attached to the image, a build-provenance attestation, and
+keyless cosign signing — then a verify step, because a signing step nobody
+verifies is one nobody would notice breaking.
 
-`--sbom` and `--provenance` are documented in the Dockerfile and not produced
-by CI; images are unsigned. Deferred deliberately, recorded so the deferral
-stays a decision.
+Signs the **digest**, not the tag. A tag can be repointed; signing `:latest`
+would sign whatever `latest` means at verification time, which is not a
+signature.
+
+Fixed alongside it, and the more important half: the launcher's default image
+`ghcr.io/azurebeard/dsar-assist:latest` **had never been published**, so
+`./dsar up` — the primary documented path — failed for anyone not running from
+source. Worse, the launcher preferred Docker on `command -v docker` alone, so
+having Docker installed was a *reason the tool did not start*. It now checks
+the image is actually pullable and falls back to `uv` with an explanation.
+Both runtimes exist so neither is a single point of failure; that had quietly
+stopped being true.
 
 ---
 

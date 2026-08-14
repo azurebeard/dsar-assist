@@ -22,10 +22,28 @@ PORT="${DSAR_PORT:-8765}"
 AUDIT_DIR="${DSAR_AUDIT_DIR:-$HOME/.dsar/audit}"
 RUNTIME="${DSAR_RUNTIME:-auto}"
 
+# Docker being INSTALLED is not the same as the image being available. The
+# published image may not exist yet, the registry may be unreachable, or this
+# may be a private package the host is not logged in to. Preferring Docker and
+# then failing on a missing image is worse than not preferring it: it turns
+# "Docker is installed" into a reason the tool does not start, which is exactly
+# the single point of failure both runtimes exist to avoid.
+image_available() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1 || return 1
+  docker image inspect "$IMAGE" >/dev/null 2>&1 && return 0
+  printf 'Pulling %s...\n' "$IMAGE" >&2
+  docker pull --quiet "$IMAGE" >/dev/null 2>&1
+}
+
 if [ "$RUNTIME" = "auto" ]; then
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if image_available; then
     RUNTIME=docker
   elif command -v uvx >/dev/null 2>&1; then
+    if command -v docker >/dev/null 2>&1; then
+      printf '%s is not available; falling back to uv.\n' "$IMAGE" >&2
+      printf 'If the image is private, run: docker login ghcr.io\n' >&2
+    fi
     RUNTIME=uv
   else
     cat >&2 <<'EOF'
