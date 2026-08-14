@@ -23,7 +23,7 @@
     case_id: null, reference: null, canWrite: false,
     pollTimer: null, pollStarted: null, generated: null,
     tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
-    nextPollAt: null, statusBusy: false,
+    nextPollAt: null, statusBusy: false, viewEpoch: 0,
     //: Which narrowings have been applied to each query, by template id. The
     //: delta is only the expansion's contribution while these two agree; see
     //: renderComparability().
@@ -77,7 +77,14 @@
   // And it is cleared on sign-out unconditionally. It previously survived,
   // which on a shared machine meant the next person saw the last person's
   // case progress on the sign-in screen.
-  function status(text, busy) {
+  // `epoch` is the view generation the caller was on when it started. A
+  // status written after the operator navigated away describes a page they are
+  // no longer looking at — which is how "Estimating…" came to sit on the
+  // Requests list. `refreshCase` had guarded against this since the first
+  // report of it; the five async handlers that settle a status after an await
+  // had not, and each was one more place to forget.
+  function status(text, busy, epoch) {
+    if (epoch !== undefined && epoch !== state.viewEpoch) return;
     const bar = $("status");
     if (state.statusTimer) { clearTimeout(state.statusTimer); state.statusTimer = null; }
     if (!text) { state.statusBusy = false; bar.setAttribute("hidden", ""); return; }
@@ -121,6 +128,7 @@
       section.setAttribute("hidden", "");
     }
     state.view = name;
+    state.viewEpoch += 1;
     $("view-" + name).removeAttribute("hidden");
     for (const tab of document.querySelectorAll(".tab")) {
       tab.classList.toggle("active", tab.dataset.view === name);
@@ -256,7 +264,8 @@
     const reference = $("reference").value.trim();
     if (!reference) return fail(null, "A DSAR reference is required.");
     await withBusy($("create-case"), "Creating\u2026", async () => {
-      status("Creating the eDiscovery case in Microsoft Purview\u2026", true);
+      const epoch = state.viewEpoch;
+      status("Creating the eDiscovery case in Microsoft Purview\u2026", true, epoch);
       try {
         const result = await api("/api/case/create", { reference });
         if (result.status !== 201) {
@@ -271,7 +280,7 @@
         show("case-created");
         $("subject-fieldset").disabled = false;
         $("primary-email").focus();
-        status("Case created.", false);
+        status("Case created.", false, epoch);
       } catch (err) { /* handled in api() */ }
     });
   });
@@ -287,7 +296,8 @@
 
   async function doExpand() {
     try {
-      status("Looking the subject up in the directory\u2026", true);
+      const epoch = state.viewEpoch;
+      status("Looking the subject up in the directory\u2026", true, epoch);
       const { status: code, payload } = await api("/api/expand", {
         case_id: state.case_id,
         primary_email: $("primary-email").value.trim(),
@@ -305,7 +315,7 @@
         " and " + mentions + " mention clause" + (mentions === 1 ? "" : "s") +
         ". Review the queries below — nothing has run yet.");
       show("expand-note");
-      status("Subject resolved. Review the queries before running them.", false);
+      status("Subject resolved. Review the queries before running them.", false, epoch);
     } catch (err) { /* handled */ }
   }
 
@@ -527,7 +537,8 @@
     }
 
     try {
-      status("Applying \u201c" + template.name + "\u201d\u2026", true);
+      const epoch = state.viewEpoch;
+      status("Applying \u201c" + template.name + "\u201d\u2026", true, epoch);
       // One box at a time, and the failure message names how far it got. A
       // partial application reported as a plain failure is exactly how the two
       // queries diverge without anyone knowing they have.
@@ -552,7 +563,7 @@
       renderComparability();
       status("Applied \u201c" + template.name + "\u201d to the " +
              applied.join(" and ") + " quer" +
-             (applied.length > 1 ? "ies" : "y") + ".", false);
+             (applied.length > 1 ? "ies" : "y") + ".", false, epoch);
     } catch (err) { renderComparability(); }
   }
 
@@ -561,6 +572,7 @@
   $("run-both").addEventListener("click", async () => {
     clearError();
     if (!state.case_id) return fail(null, "Create the case first.");
+    const epoch = state.viewEpoch;
     await withBusy($("run-both"), "Running\u2026", async () => {
       show("run-progress");
       for (const step of ["naive", "naive-run", "expanded", "expanded-run"]) {
@@ -570,7 +582,7 @@
         // The query sent is whatever is in the box — edited or not. A query the
         // operator saw and a query that runs must be the same string, or the
         // review step means nothing.
-        status("Creating the naive search\u2026", true);
+        status("Creating the naive search\u2026", true, epoch);
         markStep("naive", "doing");
         const naive = await api("/api/search/create", {
           case_id: state.case_id, kind: "naive",
@@ -583,7 +595,7 @@
         markStep("naive", "done");
         markStep("naive-run", "done");
 
-        status("Creating the expanded search\u2026", true);
+        status("Creating the expanded search\u2026", true, epoch);
         markStep("expanded", "doing");
         const expanded = await api("/api/search/create", {
           case_id: state.case_id, kind: "expanded",
@@ -596,7 +608,7 @@
         markStep("expanded", "done");
         markStep("expanded-run", "done");
 
-        status("Both estimates started. Watching for results\u2026", true);
+        status("Both estimates started. Watching for results\u2026", true, epoch);
         openCase({ case_id: state.case_id, reference: state.reference });
       } catch (err) { /* handled */ }
     });
@@ -822,7 +834,10 @@
         state.nextPollAt = null;
         setText("poll-note", "All estimates complete after " + elapsed() + ".");
         show("poll-note");
-        status("Estimates complete.", false);
+        // Cleared, not replaced with "Estimates complete." The table says
+        // complete, the note above says how long it took, and a third copy in
+        // a bar that looks like progress is the thing that confused.
+        status(null);
       } else {
         stopTicking();
         state.nextPollAt = null;
@@ -864,14 +879,15 @@
 
   async function startExport(search) {
     clearError();
-    status("Starting the export in Purview\u2026", true);
+    const epoch = state.viewEpoch;
+    status("Starting the export in Purview\u2026", true, epoch);
     try {
       const { status: code, payload } = await api("/api/export", {
         case_id: state.case_id, search_id: search.search_id, name: search.display_name,
       });
       if (code !== 202) return fail(payload, "The export could not be started.");
       setText("case-portal", payload.note + "  " + payload.portal_url);
-      status("Export started. Collect it in the Purview portal.", false);
+      status("Export started. Collect it in the Purview portal.", false, epoch);
     } catch (err) { /* handled */ }
   }
 

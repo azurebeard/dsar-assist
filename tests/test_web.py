@@ -177,7 +177,7 @@ def test_a_sustained_status_belongs_to_the_case_view(client: TestClient) -> None
     # expiry was improved from "non-busy only" to "both, with different
     # timeouts". A test that fails on a better implementation trains people to
     # edit tests rather than read them.
-    status_fn = script.split("function status(text, busy)", 1)[1].split("\n  }", 1)[0]
+    status_fn = script.split("function status(text, busy, epoch)", 1)[1].split("\n  }", 1)[0]
     assert "state.statusTimer = setTimeout" in status_fn
     assert "status(null)" in status_fn
 
@@ -361,7 +361,7 @@ def test_the_spinner_cannot_outlive_the_ticker(client: TestClient) -> None:
     assert "clearTicker()" in start
 
     # And the flag has to be maintained, or the coupling above never fires.
-    status_fn = script.split("function status(text, busy)", 1)[1].split("\n  }", 1)[0]
+    status_fn = script.split("function status(text, busy, epoch)", 1)[1].split("\n  }", 1)[0]
     assert "state.statusBusy = !!busy" in status_fn
     assert "state.statusBusy = false" in status_fn
 
@@ -381,3 +381,49 @@ def test_every_role_held_is_shown_not_just_the_effective_one(
     signed_in = script.split("function renderSignedIn(me)", 1)[1].split("\n  }", 1)[0]
     assert "me.roles" in signed_in
     assert "replaceChildren(...identity)" in signed_in
+
+
+def test_a_status_cannot_land_on_a_page_the_operator_left(client: TestClient) -> None:
+    """Every handler that settles a status after an `await` must drop the write
+    if the view moved on meanwhile.
+
+    `refreshCase` had guarded this since the first report. The five handlers
+    that create a case, expand an identity, apply a template, run both searches
+    and start an export had not — so "Estimating…" and "Export started." could
+    land on the Requests list, describing a page the operator was no longer
+    looking at. Each one was a separate place to remember, which is why the
+    guard now lives in `status()` and the callers only pass the epoch.
+    """
+    script = client.get("/app.js").text
+    guard = script.split("function status(text, busy, epoch)", 1)[1].split("\n  }", 1)[0]
+    assert "if (epoch !== undefined && epoch !== state.viewEpoch) return" in guard
+
+    # The epoch has to actually change, or the guard never fires.
+    show_view = script.split("function showView(name)", 1)[1].split("\n  }", 1)[0]
+    assert "state.viewEpoch += 1" in show_view
+    assert "status(null)" in show_view  # navigating away clears it
+
+    # And every deferred settle must carry one. Counted rather than named:
+    # a new handler that forgets is the failure this is guarding.
+    assert script.count("epoch)") >= 10
+
+
+def test_completion_clears_the_status_rather_than_replacing_it(
+    client: TestClient,
+) -> None:
+    """The operator asked for two conditions and only two: cleared when the
+    estimates complete, and cleared when they navigate away.
+
+    The table already says complete and the note above it says how long it
+    took. A third copy in a bar that looks like progress is the thing that
+    confused.
+    """
+    script = client.get("/app.js").text
+    complete_branch = script.split(
+        'setText("poll-note", "All estimates complete after "', 1
+    )[1].split("} else {", 1)[0]
+    assert "status(null)" in complete_branch
+    # No status TEXT written on completion. Asserted on the call rather than on
+    # the file, because the comment explaining the change names the string it
+    # removed — the same way three earlier scans tripped over their own prose.
+    assert 'status("' not in complete_branch
