@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dsar-assist"
+version = "0.1.0"
+description = "Control plane for Microsoft Purview eDiscovery DSAR cases. No data plane."
+requires-python = ">=3.12"
+
+# INV-07 — the dependency budget is four, and the structural test reads this
+# list rather than the resolved environment. `msal` pulls `requests`
+# transitively; that is visible in `uv.lock` and is not hidden here, but a
+# hand-maintained transitive allowlist does not survive dependency churn, so
+# the invariant is expressed over what we declare.
+#
+# `msal-extensions` is deliberately absent and must stay absent. It is the
+# single cause of every observed portability failure in the predecessor: its
+# libsecret backend needs PyGObject, which is a system package pip cannot
+# install, so a venv silently loses the encrypted backend and the tool degrades
+# to interactive sign-in on every launch.
+dependencies = [
+    "msal>=1.34,<2",
+    "httpx>=0.28,<1",
+    "starlette>=0.42,<1",
+    "uvicorn>=0.34,<1",
+]
+
+[project.scripts]
+# Two entry points, both asserted by CI to print the same version. The
+# predecessor shipped docs that assumed a console script nobody had installed.
+dsar = "dsar.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<10",
+    "mypy>=1.14,<2",
+]
+
+# A src layout, deliberately. It frees the repo root for the `dsar` launcher
+# script, and — more usefully — it means the test suite cannot import the
+# source tree by accident. Tests exercise the *installed* package, so a file
+# that is present in git but missing from the wheel fails in CI rather than in
+# the container during a demo.
+#
+# `packages` carries every file under the directory, static assets included; a
+# `force-include` for `web/static` would name the same paths twice and the
+# build refuses it.
+[tool.hatch.build.targets.wheel]
+packages = ["src/dsar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "live: requires a real Entra app registration and a Purview-enabled tenant",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/dsar"]
+mypy_path = "src"
+warn_unreachable = true
+
+# msal ships no type information and no py.typed marker. The boundary is narrow
+# — one wrapper module — and the wrapper annotates what it returns, so the
+# untyped region does not spread.
+[[tool.mypy.overrides]]
+module = ["msal", "msal.*"]
+ignore_missing_imports = true
+follow_untyped_imports = false

@@ -1,0 +1,21 @@
+# Local environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Never commit anything that could carry tenant state or credentials.
+# Backstops, not the primary control — the design has no secret to leak.
+.env
+.env.*
+local_settings.json
+config.json
+*.pem
+*.pfx
+audit/
+*.jsonl

@@ -1,0 +1,72 @@
+#!/usr/bin/env sh
+# DSAR Assist launcher — POSIX hosts (macOS, Linux).
+#
+# Two supported ways to run this on an operator's machine, because relying on
+# only one is how the predecessor's demo died. Docker Desktop is frequently
+# blocked or unlicensed on a locked-down client laptop; uv is a single static
+# binary that installs without admin rights.
+#
+#   ./dsar up                    prefer Docker, fall back to uv
+#   DSAR_RUNTIME=uv ./dsar up
+#   DSAR_RUNTIME=docker ./dsar doctor
+#
+# The `-p 127.0.0.1:8765:8765` below is a security control, not a convenience.
+# Without the address prefix, `-p 8765:8765` publishes on every interface of
+# the host. This is where the predecessor's loopback-bind guarantee moved to
+# when the product became a container, and a structural test asserts the string
+# is present in this file.
+set -eu
+
+IMAGE="${DSAR_IMAGE:-ghcr.io/azurebeard/dsar-assist:latest}"
+PORT="${DSAR_PORT:-8765}"
+AUDIT_DIR="${DSAR_AUDIT_DIR:-$HOME/.dsar/audit}"
+RUNTIME="${DSAR_RUNTIME:-auto}"
+
+if [ "$RUNTIME" = "auto" ]; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    RUNTIME=docker
+  elif command -v uvx >/dev/null 2>&1; then
+    RUNTIME=uv
+  else
+    cat >&2 <<'EOF'
+Neither Docker nor uv is available on this machine.
+
+  Docker:  https://docs.docker.com/get-started/get-docker/
+  uv:      curl -LsSf https://astral.sh/uv/install.sh | sh
+           (a single static binary — no admin rights required)
+
+Then run ./dsar up again.
+EOF
+    exit 127
+  fi
+fi
+
+open_browser() {
+  ( sleep 1
+    if command -v open >/dev/null 2>&1; then open "$1"
+    elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1"
+    fi ) >/dev/null 2>&1 &
+}
+
+case "$RUNTIME" in
+  docker)
+    # There is no browser inside the container and the port belongs to the
+    # container's network namespace, so the host side opens the page.
+    if [ "${1:-}" = "up" ]; then open_browser "http://localhost:${PORT}"; fi
+    mkdir -p "$AUDIT_DIR"
+    exec docker run --rm -it \
+      -p "127.0.0.1:${PORT}:${PORT}" \
+      -e DSAR_CLIENT_ID -e DSAR_TENANT_ID -e DSAR_IDENTITY_EXPANSION \
+      -e "DSAR_PORT=${PORT}" \
+      -e DSAR_IN_CONTAINER=1 \
+      -v "${AUDIT_DIR}:/var/lib/dsar/audit" \
+      "$IMAGE" "$@"
+    ;;
+  uv)
+    exec uvx --from dsar-assist dsar "$@"
+    ;;
+  *)
+    echo "DSAR_RUNTIME must be auto, docker or uv (got: ${RUNTIME})" >&2
+    exit 2
+    ;;
+esac

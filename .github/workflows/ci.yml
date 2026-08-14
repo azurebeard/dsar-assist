@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege by default. No job here needs to write anything; the deploy
+# workflow asks for `id-token: write` on its own.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.11.14"
+
+jobs:
+  # Runs first and alone, so an invariant breach is unambiguous in the log
+  # rather than buried in a hundred unit-test lines. Inherited from the
+  # predecessor's CI, which got this right.
+  structural:
+    name: Structural invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@887a942a15af3a7626099df99e897a18d9e5ab3a # v5.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest tests/test_structural.py -v
+
+  # The predecessor died cross-platform. Test cross-platform.
+  test:
+    name: Tests (${{ matrix.os }})
+    needs: structural
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@887a942a15af3a7626099df99e897a18d9e5ab3a # v5.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest
+
+      # Guard against the predecessor's failure #4: a console script the docs
+      # assume and nobody installed. Both entry points must exist and agree.
+      - name: Entry points agree
+        shell: bash
+        run: |
+          a="$(uv run dsar --version)"
+          b="$(uv run python -m dsar --version)"
+          echo "console script: $a"
+          echo "python -m dsar: $b"
+          [ "$a" = "$b" ] || { echo "entry points disagree"; exit 1; }
+
+      - name: Doctor runs offline
+        shell: bash
+        env:
+          DSAR_CLIENT_ID: 00000000-0000-0000-0000-000000000001
+          DSAR_TENANT_ID: 00000000-0000-0000-0000-000000000002
+        run: uv run dsar doctor --offline
+
+  typecheck:
+    name: mypy --strict
+    needs: structural
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@887a942a15af3a7626099df99e897a18d9e5ab3a # v5.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run mypy
+
+  # A stale lock re-resolves per machine, which is the exact class of failure
+  # this project exists to eliminate. Fail loudly instead.
+  lock:
+    name: Lockfile is current
+    needs: structural
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@887a942a15af3a7626099df99e897a18d9e5ab3a # v5.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv lock --check
+
+  container:
+    name: Container smoke test
+    needs: structural
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      # arm64 is not optional — Apple Silicon is where the predecessor's demo
+      # failed. Build both, load amd64 for the smoke test.
+      - name: Build (multi-arch)
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: dsar-assist:ci
+
+      - name: Build (load for smoke test)
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          load: true
+          tags: dsar-assist:ci
+
+      - name: Entry point is the installed console script
+        run: |
+          docker run --rm dsar-assist:ci --version
+          docker run --rm --entrypoint python dsar-assist:ci -m dsar --version
+          a="$(docker run --rm dsar-assist:ci --version)"
+          b="$(docker run --rm --entrypoint python dsar-assist:ci -m dsar --version)"
+          [ "$a" = "$b" ] || { echo "entry points disagree in the image"; exit 1; }
+
+      - name: Runs as non-root
+        run: |
+          uid="$(docker run --rm --entrypoint id dsar-assist:ci -u)"
+          [ "$uid" = "10001" ] || { echo "expected uid 10001, got $uid"; exit 1; }
+
+      - name: Keyring dependency is absent from the image
+        run: |
+          out="$(docker run --rm --entrypoint python dsar-assist:ci -c \
+            'import importlib.util; print(importlib.util.find_spec("msal_extensions"))')"
+          [ "$out" = "None" ] || { echo "msal-extensions is present: $out"; exit 1; }
+
+      - name: Doctor passes offline
+        run: |
+          docker run --rm \
+            -e DSAR_CLIENT_ID=00000000-0000-0000-0000-000000000001 \
+            -e DSAR_TENANT_ID=00000000-0000-0000-0000-000000000002 \
+            dsar-assist:ci doctor --offline
+
+      - name: Serves, with the security headers, on loopback only
+        run: |
+          docker run -d --rm --name dsar-ci -p 127.0.0.1:8765:8765 \
+            -e DSAR_CLIENT_ID=00000000-0000-0000-0000-000000000001 \
+            -e DSAR_TENANT_ID=00000000-0000-0000-0000-000000000002 \
+            dsar-assist:ci up --no-browser
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8765/healthz >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8765/healthz
+          headers="$(curl -sD- -o /dev/null http://127.0.0.1:8765/)"
+          echo "$headers" | grep -q "default-src 'none'"       || { echo "CSP missing"; exit 1; }
+          echo "$headers" | grep -qi 'x-frame-options: DENY'    || { echo "XFO missing"; exit 1; }
+          echo "$headers" | grep -qi 'x-content-type-options'   || { echo "nosniff missing"; exit 1; }
+          # A file in static/ that nobody named in the allowlist is not served.
+          code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/style.css)"
+          [ "$code" = "404" ] || { echo "unlisted static returned $code"; exit 1; }
+          docker port dsar-ci | grep -q '127.0.0.1:8765' || { echo "not loopback-only"; exit 1; }
+          docker stop -t 3 dsar-ci
+
+      - name: Trivy — image and secrets
+        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # 0.30.0
+        with:
+          image-ref: dsar-assist:ci
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true

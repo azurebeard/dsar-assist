@@ -1,0 +1,9 @@
+# Keep the build context to what the image actually needs. Anything that could
+# carry tenant state or local credentials must never reach a layer.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+src/**/__pycache__/
+src/**/*.pyc
