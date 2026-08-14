@@ -124,8 +124,18 @@
         <textarea id="kql-expanded" rows="6" spellcheck="false"></textarea>
       </div>
 
+      <p>
+        <button id="reset-queries" class="button secondary small" type="button">
+          Reset to generated queries
+        </button>
+      </p>
+
       <details>
         <summary>Narrow it further</summary>
+        <p class="muted small">
+          Each narrowing stacks onto the query above with AND, wrapped in
+          parentheses so it cannot change what the query already meant.
+        </p>
         <div id="templates" class="templates"></div>
       </details>
 

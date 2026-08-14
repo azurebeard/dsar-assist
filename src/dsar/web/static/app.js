@@ -19,7 +19,10 @@
   const hide = (id) => $(id).setAttribute("hidden", "");
   const setText = (id, value) => { $(id).textContent = value; };
 
-  let state = { case_id: null, reference: null, canWrite: false, pollTimer: null };
+  let state = {
+    case_id: null, reference: null, canWrite: false,
+    pollTimer: null, generated: null,
+  };
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
   // same-origin GET, so an all-POST surface is what lets the server enforce
@@ -214,8 +217,19 @@
 
     $("kql-naive").value = data.naive_kql || "";
     $("kql-expanded").value = data.kql || "";
+    // Keep the pristine generated query so a narrowing can be undone. Templates
+    // stack by design, but a stacked query is easy to get wrong by hand and
+    // impossible to un-stack without this.
+    state.generated = { naive: data.naive_kql || "", expanded: data.kql || "" };
     show("expansion");
   }
+
+  $("reset-queries").addEventListener("click", () => {
+    clearError();
+    if (!state.generated) return;
+    $("kql-naive").value = state.generated.naive;
+    $("kql-expanded").value = state.generated.expanded;
+  });
 
   // -------------------------------------------------------- templates
 
@@ -273,6 +287,18 @@
           values,
         });
         if (status !== 200) return fail(payload, "The template could not be applied.");
+        // Applying the same narrowing twice yields
+        //   (... AND kind:email) AND kind:email
+        // which is valid KQL, redundant, and unreadable — and for the date
+        // template two ranges can contradict each other outright. A repeat is
+        // almost always a double click, so it is refused rather than stacked.
+        const current = $("kql-expanded").value;
+        const added = payload.query.slice(current.length).trim();
+        if (added && current.indexOf(added.replace(/^AND\s+/, "")) !== -1) {
+          return fail(null,
+            "That narrowing is already in the query. Use Reset to start from the " +
+            "generated one, or edit the text directly.");
+        }
         $("kql-expanded").value = payload.query;
       } catch (err) { /* handled */ }
     });
