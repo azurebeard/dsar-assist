@@ -159,8 +159,29 @@ def test_signing_out_tears_down_the_previous_session(client: TestClient) -> None
 
 
 def test_a_sustained_status_belongs_to_the_case_view(client: TestClient) -> None:
-    """A spinner that never resolves is a lie anywhere the work is not ongoing."""
+    """A spinner that never resolves is a lie anywhere the work is not ongoing.
+
+    Guarded on the tracked view name rather than on an element's hidden
+    attribute: an in-flight refresh that lands after the operator navigated
+    away would otherwise write a status describing a page they are no longer
+    looking at, which is what "the previous status is retained" was.
+    """
     script = client.get("/app.js").text
-    assert 'hasAttribute("hidden")' in script
+    assert script.count('state.view !== "case"') >= 2
+    assert "state.view = name" in script
     # Non-busy messages clear themselves rather than becoming furniture.
     assert "setTimeout(() => status(null), 4000)" in script
+
+
+def test_export_message_says_where_not_what_it_cannot_do(client: TestClient) -> None:
+    """The handoff IS the security model. Phrasing it as "this tool cannot"
+    invites the reader to hear a limitation instead."""
+    script = client.get("/app.js").text
+    assert "Export started. Collect it in the Purview portal." in script
+    # Scoped to the export message. "which this tool cannot change" survives
+    # elsewhere and should: it describes where the Purview RBAC boundary is,
+    # which is a fact about the system rather than an apology for the tool.
+    export_line = next(
+        line for line in script.splitlines() if "Export started." in line
+    )
+    assert "cannot" not in export_line

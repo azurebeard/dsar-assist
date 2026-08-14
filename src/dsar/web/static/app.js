@@ -22,7 +22,7 @@
   let state = {
     case_id: null, reference: null, canWrite: false,
     pollTimer: null, pollDelay: 10000, pollStarted: null, generated: null,
-    tickTimer: null, running: 0, total: 0, statusTimer: null,
+    tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
   };
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
@@ -108,6 +108,7 @@
     for (const section of document.querySelectorAll(".view")) {
       section.setAttribute("hidden", "");
     }
+    state.view = name;
     $("view-" + name).removeAttribute("hidden");
     for (const tab of document.querySelectorAll(".tab")) {
       tab.classList.toggle("active", tab.dataset.view === name);
@@ -491,7 +492,7 @@
 
   function renderWaiting() {
     if (!state.running) return;
-    if ($("view-case").hasAttribute("hidden")) {
+    if (state.view !== "case") {
       // The view moved on. Stop rather than narrating a page nobody is looking
       // at — and stop the clock with it.
       stopTicking();
@@ -589,6 +590,16 @@
       state.running = rows.filter((s) => !(s.statistics || {}).complete).length;
       state.total = rows.length;
 
+      // A refresh started on the case view can land after the operator has
+      // gone back to the list. Writing the result then leaves a stale status
+      // on a page it does not describe — which is what "the previous status is
+      // retained" was.
+      if (state.view !== "case") {
+        stopTicking();
+        status(null);
+        return true;
+      }
+
       if (rows.length && state.running) {
         renderWaiting();
         startTicking();
@@ -644,7 +655,7 @@
       });
       if (code !== 202) return fail(payload, "The export could not be started.");
       setText("case-portal", payload.note + "  " + payload.portal_url);
-      status("Export started. Collect it in the Purview portal — this tool cannot.", false);
+      status("Export started. Collect it in the Purview portal.", false);
     } catch (err) { /* handled */ }
   }
 

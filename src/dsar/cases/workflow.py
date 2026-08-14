@@ -58,10 +58,12 @@ class ExportHandoff:
     portal_url: str
     #: Said plainly because it is the product's defining property rather than a
     #: limitation to apologise for.
+    #: Stated as a fact about where the work happens, not as an apology for a
+    #: missing feature. The handoff IS the security model; phrasing it as
+    #: "this tool cannot" invites the reader to hear a limitation.
     note: str = (
         "The export runs in Microsoft Purview and is collected there, under "
-        "your own identity. This tool never downloads, previews or stores item "
-        "content — it does not hold the permission and has no code path for it."
+        "your own identity."
     )
 
 
