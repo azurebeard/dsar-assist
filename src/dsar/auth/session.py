@@ -35,6 +35,8 @@ __all__ = [
     "SessionStore",
     "FlowStore",
     "FlowStoreFull",
+    "SessionStoreFull",
+    "MAX_SESSIONS_PER_PRINCIPAL",
     "SESSION_COOKIE",
     "FLOW_COOKIE",
 ]
@@ -68,6 +70,11 @@ FLOW_TTL_SECONDS = 5 * 60
 #: dict keyed by anything a caller can cause to be created is a memory
 #: exhaustion vector, and a cap makes that a refusal instead.
 MAX_SESSIONS = 64
+
+#: Sessions one operator may hold at once. A laptop, a phone and a second
+#: browser is three; four leaves room without letting one person's habits fill
+#: a shared instance. Their fifth evicts their own oldest — never a colleague's.
+MAX_SESSIONS_PER_PRINCIPAL = 4
 MAX_PENDING_FLOWS = 64
 
 
@@ -77,6 +84,10 @@ def new_id() -> str:
 
 class FlowStoreFull(RuntimeError):
     """Too many sign-ins are in progress to accept another."""
+
+
+class SessionStoreFull(RuntimeError):
+    """Too many operators are signed in to accept another."""
 
 
 @dataclass
@@ -115,12 +126,44 @@ class SessionStore:
         self._max = max_sessions
 
     def create(self, principal: Principal, cache: msal.TokenCache) -> Session:
+        """Admit a session, bounding each operator's own footprint first.
+
+        The first version evicted the globally-oldest session to make room.
+        On the desktop that is one operator and harmless; on a shared instance
+        it means a signed-in operator opening tabs silently signs out a
+        colleague, mid-case, with no message either of them can see. That is
+        the same defect the flow store had (B-06, raised by the OWASP A04
+        pass), and it wants the same shape of answer.
+
+        Two bounds instead of one:
+
+        * **Per principal.** An operator's fifth session evicts *their own*
+          oldest. The cost of one person's habits falls on that person.
+        * **Global, and it refuses.** With every operator inside their own
+          budget, a full store means genuinely too many people — not one person
+          misbehaving. Refusing is visible and leaves every established session
+          working; evicting a stranger is neither.
+        """
         session = Session(id=new_id(), principal=principal, cache=cache)
         with self._lock:
             self._evict_locked()
-            if len(self._sessions) >= self._max:
-                oldest = min(self._sessions.values(), key=lambda s: s.last_seen)
+
+            mine = [
+                s for s in self._sessions.values()
+                if (s.principal.oid, s.principal.tenant_id)
+                == (principal.oid, principal.tenant_id)
+            ]
+            while len(mine) >= MAX_SESSIONS_PER_PRINCIPAL:
+                oldest = min(mine, key=lambda s: s.last_seen)
                 del self._sessions[oldest.id]
+                mine.remove(oldest)
+
+            if len(self._sessions) >= self._max:
+                raise SessionStoreFull(
+                    f"{self._max} operators are already signed in to this "
+                    f"instance. Existing sessions are unaffected; try again "
+                    f"once one has signed out or timed out."
+                )
             self._sessions[session.id] = session
         return session
 

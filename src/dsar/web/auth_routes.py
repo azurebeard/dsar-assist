@@ -31,6 +31,7 @@ from dsar.auth.provider import Principal
 from dsar.auth.session import (
     FlowStore,
     FlowStoreFull,
+    SessionStoreFull,
     SessionStore,
     cookie_names,
 )
@@ -192,6 +193,30 @@ async def callback(request: Request) -> Response:
         log.error("ID token validation failed: %s", type(exc).__name__)
         return HTMLResponse("<h1>Sign-in failed</h1>", status_code=400)
 
+    try:
+        session = state.sessions.create(principal, app.token_cache)
+    except SessionStoreFull as exc:
+        # Recorded as a refusal, not dropped. A trail holding only successes
+        # describes a system where nobody is ever turned away — and this is
+        # precisely the event an operator will report as "it just does
+        # nothing" if it is not written down somewhere.
+        state.trail.write(
+            Action.SIGN_IN,
+            Outcome.DENIED,
+            actor_oid=principal.oid,
+            actor_upn=principal.upn,
+            tenant_id=principal.tenant_id,
+            uti=principal.uti,
+            detail="session store full",
+        )
+        log.warning("refused a sign-in: %s", exc)
+        return HTMLResponse(
+            f"<h1>Too many people signed in</h1><p>{_escape(str(exc))}</p>",
+            status_code=503,
+        )
+
+    # After the session exists, so a trail entry never claims a sign-in that
+    # was then refused.
     state.trail.write(
         Action.SIGN_IN,
         Outcome.OK,
@@ -201,7 +226,6 @@ async def callback(request: Request) -> Response:
         uti=principal.uti,
         detail=", ".join(sorted(principal.roles)) or "no DSAR role",
     )
-    session = state.sessions.create(principal, app.token_cache)
     log.info(
         "signed in: oid=%s roles=%s uti=%s",
         principal.oid,

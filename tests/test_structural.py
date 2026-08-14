@@ -240,12 +240,15 @@ def test_no_client_secret_anywhere() -> None:
         "tests/test_hardening.py",
         "tests/test_structural.py",
         # Probes and provisioning assert the *absence* of a secret: the FIC
-        # probe checks no client_secret is sent alongside the assertion, and
-        # provision.sh refuses a registration holding password credentials.
-        # Naming a thing in order to prove it is not there is the opposite of
-        # using it.
+        # probe checks no client_secret is sent alongside the assertion,
+        # provision.sh refuses a registration holding password credentials,
+        # and add-fic.sh prints the az query that proves both credential
+        # collections are empty. Naming a thing in order to prove it is not
+        # there is the opposite of using it — and the query has to carry the
+        # real property name, or it is a command that does not run.
         "verification/probe_fic_assertion_offline.py",
         "infra/entra/provision.sh",
+        "infra/entra/add-fic.sh",
     }
     hits = [
         hit
@@ -844,3 +847,98 @@ def test_the_runtime_image_has_no_shell() -> None:
             f"{forbidden.strip()!r} in the runtime stage — there is no shell "
             f"for it, and adding one undoes B-08"
         )
+
+
+# --------------------------------------------------------------- hosted IaC
+
+
+def _bicep_source() -> str:
+    """Every .bicep file, concatenated. Text rather than compiled ARM: these
+    are assertions about what the template *says*, and compiling would need the
+    Bicep CLI on every machine that runs the suite."""
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((REPO_ROOT / "infra").rglob("*.bicep"))
+    )
+
+
+def test_the_hosted_deployment_declares_no_secrets() -> None:
+    """`secrets: []` is the central assertion of the hosted design.
+
+    The client assertion is minted at runtime by a managed identity and the
+    storage account allows no shared key, so there is nothing to put here. A
+    non-empty array means someone reintroduced a credential — and the whole
+    argument for the federated identity credential with it.
+    """
+    source = _bicep_source()
+    assert "secrets: []" in source, "the container app no longer declares an empty secrets array"
+    # `secretRef` is how a container env var consumes one. Its absence is the
+    # second half of the same claim.
+    assert "secretRef" not in source
+
+
+def test_the_hosted_ingress_refuses_plaintext() -> None:
+    """A `__Host-` cookie requires Secure, so a plaintext listener could only
+    ever serve a broken sign-in — while appearing to work."""
+    source = _bicep_source()
+    assert "allowInsecure: false" in source
+    assert "allowInsecure: true" not in source
+
+
+def test_the_ip_restriction_parameter_has_no_default() -> None:
+    """Deployment must fail until a human decides whether this endpoint is
+    internet-facing. A default — open or closed — makes that decision silently
+    on their behalf."""
+    main = (REPO_ROOT / "infra" / "main.bicep").read_text(encoding="utf-8")
+    declaration = next(
+        line for line in main.splitlines() if line.startswith("param allowedIpRanges")
+    )
+    assert "=" not in declaration, f"allowedIpRanges has a default: {declaration}"
+
+
+def test_the_container_app_is_pinned_to_one_replica() -> None:
+    """Not a cost decision. Sessions are in-process and the audit chain's head
+    is process state — two writers would fork the trail into two chains that
+    both verify and neither of which is the record."""
+    source = _bicep_source()
+    assert "minReplicas: 1" in source
+    assert "maxReplicas: 1" in source
+
+
+def test_the_audit_container_is_append_protected() -> None:
+    """`allowProtectedAppendWrites` permits appends to an append blob while
+    forbidding modification or deletion of what is already there — exactly the
+    shape of a hash-chained trail."""
+    source = _bicep_source()
+    assert "allowProtectedAppendWrites: true" in source
+    assert "immutabilityPeriodSinceCreationInDays" in source
+
+
+def test_the_storage_account_allows_no_shared_key() -> None:
+    """No account key means no SAS anywhere in the design. The audit sink
+    authenticates with an Entra token from the managed identity — the same
+    reasoning the application makes about client secrets."""
+    source = _bicep_source()
+    assert "allowSharedKeyAccess: false" in source
+    assert "allowBlobPublicAccess: false" in source
+    assert "minimumTlsVersion: 'TLS1_2'" in source
+
+
+def test_the_identity_is_user_assigned_and_not_system() -> None:
+    """The federated credential names the identity's principal id. A
+    system-assigned identity is created and destroyed with the app, so a
+    redeploy would silently break client authentication — surfacing as
+    AADSTS70021 some hours later."""
+    source = _bicep_source()
+    assert "type: 'UserAssigned'" in source
+    assert "SystemAssigned" not in source
+
+
+def test_the_container_image_is_pinned_by_digest() -> None:
+    """Same argument as the Dockerfile's base images. A tag can be repointed
+    with no change here."""
+    main = (REPO_ROOT / "infra" / "main.bicep").read_text(encoding="utf-8")
+    image_line = next(
+        line for line in main.splitlines() if "ghcr.io/azurebeard/dsar-assist" in line
+    )
+    assert "@sha256:" in image_line, f"not digest-pinned: {image_line}"

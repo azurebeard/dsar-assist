@@ -188,19 +188,73 @@ def test_removed_session_is_gone() -> None:
     assert store.get(session.id) is None
 
 
-def test_session_store_is_bounded_and_evicts_lru() -> None:
-    """An unbounded dict keyed by anything a caller can create is a memory
-    exhaustion vector."""
+def test_an_operators_own_sessions_are_bounded_first() -> None:
+    """One operator's habits cost that operator, not the instance.
+
+    Their sessions beyond the per-principal cap evict their own oldest — a
+    laptop, a phone and a second browser all keep working, and a fourth tab
+    does not consume a colleague's slot.
+    """
     import msal
 
-    store = SessionStore(max_sessions=3)
+    from dsar.auth.session import MAX_SESSIONS_PER_PRINCIPAL
+
+    store = SessionStore(max_sessions=64)
+    me = Principal(oid="operator-a", tenant_id=TENANT)
     ids = []
-    for i in range(5):
-        ids.append(store.create(Principal(oid=str(i), tenant_id=TENANT), msal.TokenCache()).id)
+    for _ in range(MAX_SESSIONS_PER_PRINCIPAL + 3):
+        ids.append(store.create(me, msal.TokenCache()).id)
         time.sleep(0.001)
-    assert len(store) <= 3
-    assert store.get(ids[0]) is None      # evicted
-    assert store.get(ids[-1]) is not None  # newest survives
+
+    assert len(store) == MAX_SESSIONS_PER_PRINCIPAL
+    assert store.get(ids[0]) is None       # their own oldest went
+    assert store.get(ids[-1]) is not None   # their newest survives
+
+
+def test_one_operator_cannot_evict_another(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B-06. The store used to evict the globally-oldest session to make room.
+
+    On the desktop that is one operator and harmless. On a shared instance it
+    means a signed-in operator opening tabs silently signs out a colleague,
+    mid-case, with no message either of them can see — a bystander paying for
+    someone else's traffic, which is the same defect the flow store had.
+    """
+    import msal
+
+    from dsar.auth import session as session_module
+
+    monkeypatch.setattr(session_module, "MAX_SESSIONS_PER_PRINCIPAL", 2)
+    store = SessionStore(max_sessions=4)
+
+    victim = store.create(Principal(oid="victim", tenant_id=TENANT), msal.TokenCache())
+    time.sleep(0.001)
+
+    noisy = Principal(oid="noisy", tenant_id=TENANT)
+    for _ in range(10):
+        store.create(noisy, msal.TokenCache())
+        time.sleep(0.001)
+
+    assert store.get(victim.id) is not None, "a bystander's session was evicted"
+
+
+def test_a_genuinely_full_store_refuses_rather_than_evicting() -> None:
+    """With every operator inside their own budget, a full store means too
+    many people — not one person misbehaving. Refusing is visible and leaves
+    every established session working; evicting a stranger is neither."""
+    import msal
+
+    from dsar.auth.session import SessionStoreFull
+
+    store = SessionStore(max_sessions=3)
+    held = [
+        store.create(Principal(oid=f"op-{i}", tenant_id=TENANT), msal.TokenCache())
+        for i in range(3)
+    ]
+    with pytest.raises(SessionStoreFull, match="already signed in"):
+        store.create(Principal(oid="late", tenant_id=TENANT), msal.TokenCache())
+
+    for session in held:
+        assert store.get(session.id) is not None
 
 
 # ------------------------------------------------------------ flow cache
