@@ -272,7 +272,7 @@ def test_callback_without_a_pending_flow_is_refused(client: TestClient) -> None:
 
 
 def test_logout_clears_the_session_cookie(client: TestClient) -> None:
-    response = client.post("/auth/logout")
+    response = client.post("/auth/logout", headers={"Origin": "http://localhost:8765"})
     assert response.status_code == 302
     assert any(
         "dsar_session=" in c and "Max-Age=0" in c
@@ -315,3 +315,16 @@ def test_step_up_url_carries_the_claims() -> None:
     url = provider.step_up_url('{"access_token":{"nbf":{"essential":true}}}')
     assert url.startswith("/auth/login?claims=")
     assert "access_token" in url
+
+
+def test_logout_requires_a_same_origin_post(client: TestClient) -> None:
+    """Forced sign-out is a nuisance rather than a compromise — but every other
+    state-changing POST enforces the origin rule, and an unexplained exception
+    is how a rule stops being trusted."""
+    assert client.post("/auth/logout").status_code == 403
+    assert client.post(
+        "/auth/logout", headers={"Origin": "https://evil.example"}
+    ).status_code == 403
+    assert client.post(
+        "/auth/logout", headers={"Origin": "http://localhost:8765"}
+    ).status_code == 302

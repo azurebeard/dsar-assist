@@ -58,7 +58,29 @@ log = logging.getLogger(__name__)
 # chooses them. Without this, a crafted identifier could walk the path back up
 # and reach an endpoint outside the table, which is the one thing the table
 # exists to prevent.
-_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~%-]{1,256}$")
+#
+# The predecessor's regex was `^[A-Za-z0-9._~%-]{1,256}$`, and its comment
+# claimed a dot-segment guarantee the pattern did not provide. `.` and `-`
+# being in the class meant `..` matched, and an HTTP client normalises dot
+# segments before the request leaves:
+#
+#     caseId=".."  ->  /security/cases/ediscoveryCases/../searches
+#                  ->  /security/cases/searches          (measured, httpx 0.28)
+#
+# — an endpoint outside the table, reached through the very check meant to
+# prevent it. Two changes close it:
+#
+#   * `%` is no longer permitted. Nothing here percent-encodes anything, so a
+#     `%` in a value we are about to interpolate is either an encoded `/`,
+#     an encoded `.`, or a mistake. `%2e%2e` survived the old pattern.
+#   * a segment consisting only of dots is refused outright, which is the
+#     property the comment always claimed.
+_SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
+_DOT_SEGMENT = re.compile(r"^\.+$")
+
+
+def _is_safe_segment(value: str) -> bool:
+    return bool(_SAFE_PATH_SEGMENT.match(value)) and not _DOT_SEGMENT.match(value)
 
 
 def _odata_string(value: str) -> str:
@@ -218,7 +240,7 @@ class GraphOperations:
             raise UnknownOperation(name)
 
         for key, value in path_args.items():
-            if not _SAFE_PATH_SEGMENT.match(value or ""):
+            if not _is_safe_segment(value or ""):
                 # Not logged with its value: it is caller-influenced input, and
                 # echoing it into the log is how a log becomes a payload.
                 raise UnsafePathArgument(key, value or "")

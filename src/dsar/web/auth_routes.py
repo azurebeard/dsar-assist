@@ -14,13 +14,19 @@ import logging
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 
 from dsar.auth.claims import RoleEnforcement, build_principal
 from dsar.auth.errors import NotAssigned
 from dsar.auth.msal_client import build_public_client, flow_extras, scopes_for
 from dsar.auth.provider import Principal
 from dsar.auth.session import FlowStore, SessionStore, cookie_names
+from dsar.web.security import origin_ok
 from dsar.config import Config
 
 __all__ = ["login", "callback", "logout", "current_principal", "AuthState"]
@@ -159,8 +165,18 @@ async def logout(request: Request) -> Response:
     is sometimes what they want and sometimes deeply unhelpful, so it is a
     choice. On the desktop it would sign them out of Outlook and the Purview
     portal on their own machine, which is disproportionate as a default.
+
+    Origin-checked like every other POST. Forced sign-out is a nuisance rather
+    than a compromise, so this is not urgent on its own merits — but every
+    other state-changing POST enforces the rule, and an unexplained exception
+    is how a rule stops being trusted and then stops being applied.
     """
     state: AuthState = request.app.state.auth
+    config = state.config
+    expected = (config.base_url or f"http://localhost:{config.port}").rstrip("/")
+    if not origin_ok(request, expected):
+        return JSONResponse({"error": "bad_origin"}, status_code=403)
+
     state.sessions.remove(request.cookies.get(state.session_cookie))
 
     response = RedirectResponse("/", status_code=302)

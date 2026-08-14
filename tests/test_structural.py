@@ -605,3 +605,50 @@ def test_no_print_outside_the_cli_surface() -> None:
             ):
                 offenders.append(f"{rel}:{node.lineno}")
     assert offenders == []
+
+
+def test_path_segments_cannot_escape_the_operations_table() -> None:
+    """A crafted identifier must not reach an endpoint outside the table.
+
+    The predecessor's pattern permitted `..`, and its comment claimed a
+    dot-segment guarantee it did not provide. HTTP clients normalise dot
+    segments before the request leaves, so `caseId=".."` against the
+    `{caseId}/searches` template resolved to `/security/cases/searches` —
+    outside the allowlist, reached through the check meant to prevent it.
+
+    This is the allowlist's load-bearing assumption, so it is asserted with
+    the vectors rather than trusted to a regex reading.
+    """
+    from dsar.graph.operations import GraphOperations, UnsafePathArgument
+
+    class Spy:
+        def __init__(self) -> None:
+            self.paths: list[str] = []
+
+        def request(self, method: str, path: str, **kwargs: object) -> object:
+            self.paths.append(path)
+            return object()
+
+    spy = Spy()
+    operations = GraphOperations(spy)  # type: ignore[arg-type]
+
+    attacks = [
+        "..", ".", "...", "%2e%2e", "..%2f..", "../../users",
+        "a/b", "a?x=1", "a#f", "", " ", "a b", "%2f", "..;/",
+    ]
+    accepted = []
+    for value in attacks:
+        try:
+            operations.get_case(case_id=value)
+            accepted.append(value)
+        except UnsafePathArgument:
+            pass
+    assert accepted == [], f"path check accepted: {accepted}"
+    assert spy.paths == [], f"a crafted identifier reached the client: {spy.paths}"
+
+    # And a real Graph identifier is still usable, or the fix is a denial of
+    # service on the product.
+    operations.get_case(case_id="01f85886-7bef-4a22-a27d-18bf9733bbc8")
+    assert spy.paths == [
+        "/security/cases/ediscoveryCases/01f85886-7bef-4a22-a27d-18bf9733bbc8"
+    ]
