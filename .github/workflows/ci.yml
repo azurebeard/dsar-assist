@@ -141,6 +141,16 @@ jobs:
             'import importlib.util; print(importlib.util.find_spec("msal_extensions"))')"
           [ "$out" = "None" ] || { echo "msal-extensions is present: $out"; exit 1; }
 
+      # A runtime image with no package installer cannot fetch and install
+      # code. It also removes pip's vendored msgpack and setuptools, which were
+      # the only two fixable High findings Trivy reported and were unfixable by
+      # any change to pyproject.toml.
+      - name: No package installer in the runtime image
+        run: |
+          out="$(docker run --rm --entrypoint python dsar-assist:ci -c \
+            'import importlib.util; print(importlib.util.find_spec("pip"))')"
+          [ "$out" = "None" ] || { echo "pip is present in the runtime image"; exit 1; }
+
       - name: Doctor passes offline
         run: |
           docker run --rm \

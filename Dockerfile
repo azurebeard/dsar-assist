@@ -53,7 +53,25 @@ FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b
 
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin dsar \
  && mkdir -p /var/lib/dsar/audit \
- && chown 10001:10001 /var/lib/dsar/audit
+ && chown 10001:10001 /var/lib/dsar/audit \
+ # Remove the system package installer. The application runs from
+ # /app/.venv, which `uv sync --no-editable` populated at build time, and
+ # nothing installs anything at runtime — /app/.venv/bin/python cannot even
+ # import pip. Two consequences, both wanted:
+ #
+ #   1. It closes the only two fixable High findings Trivy reported against
+ #      this image. Both were in pip's *vendored* tree (msgpack 1.1.2,
+ #      setuptools 70.3.0) rather than in any dependency we chose, so they
+ #      were unfixable by any change to pyproject.toml.
+ #   2. A runtime image with no package installer means an exploited process
+ #      cannot fetch and install code.
+ #
+ # The glob avoids hardcoding the interpreter's minor version, which changes
+ # with the base image digest.
+ && rm -rf /usr/local/lib/python3.*/site-packages/pip \
+           /usr/local/lib/python3.*/site-packages/pip-*.dist-info \
+           /usr/local/lib/python3.*/ensurepip \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
 
 COPY --from=builder --chown=10001:10001 /app /app
 
