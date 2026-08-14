@@ -182,12 +182,10 @@ jobs:
       # check had said nothing, because it was asking the wrong question.
       - name: No package installer in the runtime image
         run: |
-          out="$(docker run --rm --entrypoint python dsar-assist:ci -c \
-            'import glob
-             found = [p for root in ("/opt/python", "/app", "/usr/local")
-                        for pat in ("pip", "pip3*", "ensurepip")
-                        for p in glob.glob(root + "/**/" + pat, recursive=True)]
-             print("\n".join(found) or "0")')"
+          # One line. A multi-line -c program indented by the YAML block is
+          # indented as far as Python is concerned too, and raises
+          # IndentationError before it checks anything.
+          out="$(docker run --rm --entrypoint python dsar-assist:ci -c 'import glob; roots = ("/opt/python", "/app", "/usr/local"); pats = ("pip", "pip3*", "ensurepip"); found = [p for r in roots for q in pats for p in glob.glob(r + "/**/" + q, recursive=True)]; print(chr(10).join(found) or "0")')"
           [ "$out" = "0" ] || { echo "a package installer is present:"; echo "$out"; exit 1; }
           out="$(docker run --rm --entrypoint python dsar-assist:ci -c \
             'import importlib.util; print(importlib.util.find_spec("pip"))')"
