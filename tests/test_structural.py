@@ -422,6 +422,34 @@ def test_docs_never_show_a_bare_dsar_command() -> None:
     assert offenders == []
 
 
+def test_every_source_package_is_tracked_by_git() -> None:
+    """No package may be excluded by an ignore rule.
+
+    `.gitignore` carried a bare `audit/` to keep audit output out of the repo.
+    A bare directory pattern matches at *any* depth, so it silently excluded
+    `src/dsar/audit/` — the package Phase 3 lives in. Nothing failed; the files
+    would simply never have been committed. An ignore rule that hides your own
+    source is worse than the accident it was written to prevent.
+    """
+    import subprocess
+
+    packages = {
+        p.parent.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "src").rglob("__init__.py")
+    }
+    assert packages, "no packages found under src/"
+
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        cwd=REPO_ROOT,
+        input="\n".join(sorted(packages)),
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    assert ignored == [], f"ignored by .gitignore: {ignored}"
+
+
 def test_static_allowlist_files_exist_in_the_package() -> None:
     """Every allowlisted asset must exist where the installed package looks.
 

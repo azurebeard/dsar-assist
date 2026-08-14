@@ -17,5 +17,11 @@ local_settings.json
 config.json
 *.pem
 *.pfx
-audit/
 *.jsonl
+
+# Audit output, if someone points DSAR_AUDIT_DIR inside the working tree.
+# Anchored with a leading slash on purpose: a bare `audit/` matches a directory
+# of that name at *any* depth, which silently excluded `src/dsar/audit/` — the
+# package Phase 3 lives in. An ignore rule that hides your own source is worse
+# than the accident it was written to prevent.
+/audit/
