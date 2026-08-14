@@ -32,12 +32,32 @@
       <dt>App roles</dt><dd id="fact-roles">—</dd>
       <dt>Can create cases</dt><dd id="fact-write">—</dd>
     </dl>
-    <p class="muted">
-      The case list arrives in the next phase. It is read from Microsoft Graph
-      rather than a local database, so it is the same on every machine you sign
-      in from.
-    </p>
     <p><button id="signout" class="button secondary" type="button">Sign out</button></p>
+  </section>
+
+  <section id="requests" hidden>
+    <div class="row">
+      <h2>DSAR requests</h2>
+      <div id="scope-controls" hidden>
+        <label for="scope">Show</label>
+        <select id="scope">
+          <option value="mine">My cases</option>
+          <option value="all">All DSAR cases</option>
+        </select>
+      </div>
+    </div>
+    <p id="scope-note" class="muted small" hidden></p>
+    <p id="requests-empty" class="muted" hidden>
+      No DSAR cases yet. Cases created by this tool carry a reference and appear
+      here; anything created directly in the Purview portal does not.
+    </p>
+    <table id="requests-table" hidden>
+      <thead>
+        <tr><th>Reference</th><th>Case</th><th>Status</th><th>Created</th><th></th></tr>
+      </thead>
+      <tbody id="requests-body"></tbody>
+    </table>
+    <p id="requests-source" class="muted small"></p>
   </section>
 
   <section id="error" hidden>

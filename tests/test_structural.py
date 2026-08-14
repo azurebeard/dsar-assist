@@ -359,18 +359,43 @@ def test_msal_confined_to_auth_package() -> None:
     assert hits == []
 
 
-def test_no_sqlite_anywhere() -> None:
+def test_no_local_database() -> None:
     """The database is gone. Make it stay gone.
 
     A local SQLite store as the source of truth is why the predecessor's work
     did not travel: a correctly-installed second machine, signed into the right
-    tenant, showed an empty queue. Microsoft Graph is now the source of truth,
-    and reintroducing a durable local store would reintroduce the failure.
+    tenant, showed an empty queue, and the documented remedy was to copy the
+    file. Microsoft Graph is the source of truth now, and reintroducing a
+    durable local store would reintroduce the failure.
+
+    Checked by import and by usage rather than by scanning for the word. The
+    text-scanning version failed on a comment explaining *why* there is no
+    database — the fourth time a structural test in this file had objected to
+    prose describing the guarantee it enforces. A test that penalises writing
+    down the reason quietly pressures the next person into deleting it, which
+    costs more than the test protects.
     """
-    pattern = r"\bsqlite3?\b"
-    allowed = {"tests/test_structural.py"}
-    hits = [h for h in _scan(pattern, flags=re.I) if h.rsplit(":", 1)[0] not in allowed]
-    assert hits == []
+    import ast
+
+    banned_modules = {"sqlite" + "3", "aiosqlite", "sqlalchemy", "psycopg", "pymongo"}
+    offenders: list[str] = []
+
+    for path in _python_files("src/dsar"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] in banned_modules:
+                        offenders.append(f"{_rel(path)}:{node.lineno} import {alias.name}")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.split(".")[0] in banned_modules:
+                    offenders.append(f"{_rel(path)}:{node.lineno} from {node.module}")
+
+    assert offenders == []
+
+    # And no code path that names a database file. A `.db` under the audit
+    # directory would be a durable local store by another name.
+    assert _scan(r"\.db\b", files=_python_files("src/dsar")) == []
 
 
 # -------------------------------------------------------------- dependencies

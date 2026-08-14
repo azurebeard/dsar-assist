@@ -78,6 +78,14 @@ class Session:
     cache: msal.TokenCache = field(default_factory=msal.TokenCache)
     created_at: float = field(default_factory=time.monotonic)
     last_seen: float = field(default_factory=time.monotonic)
+    #: Per-session Graph reader, built lazily on first API call. Declared here
+    #: rather than attached with setattr so it is visible in the type, and
+    #: typed `Any` to avoid importing the cases package into the auth package —
+    #: a session should not know what the application does with it.
+    #:
+    #: Per-session, not global: its read cache holds one operator's cases, and
+    #: sharing that between people is how a shared instance leaks a list.
+    case_service: Any = None
 
     def expired(self, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now

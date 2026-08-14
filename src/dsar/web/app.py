@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from typing import Any
 import webbrowser
 from pathlib import Path
 
@@ -30,11 +31,19 @@ from starlette.routing import Route
 
 from dsar import __version__
 from dsar.config import Config, ConfigError, load_config
+from dsar.auth.desktop import DesktopTokenProvider
+from dsar.auth.msal_client import build_public_client
+from dsar.auth.session import Session
+from dsar.cases.service import CaseService
+from dsar.graph.client import GraphClient
+from dsar.graph.operations import GraphOperations
+from dsar.web.api import handle
 from dsar.web.auth_routes import AuthState, callback, current_principal, login, logout
 from dsar.web.security import (
     ALLOWED_STATIC,
     RequestLogMiddleware,
     SecurityHeadersMiddleware,
+    origin_ok,
 )
 
 __all__ = ["build_app", "serve", "BIND_HOST", "STATIC_DIR"]
@@ -102,6 +111,63 @@ async def whoami(request: Request) -> Response:
     )
 
 
+async def api(request: Request) -> Response:
+    """The one place the session and origin checks live.
+
+    Not per-route. A check repeated at every handler is a check that will one
+    day be missing from the newest one, and the newest one is exactly where
+    nobody looks.
+    """
+    config: Config = request.app.state.config
+    state = request.app.state.auth
+
+    # Same-origin, enforced as written: absent counts as a mismatch. Every API
+    # call is a POST precisely so the browser always sends the header.
+    expected = config.base_url or f"http://localhost:{config.port}"
+    if not origin_ok(request, expected.rstrip("/")):
+        return JSONResponse({"error": "bad_origin"}, status_code=403)
+
+    principal = current_principal(request)
+    if principal is None:
+        return JSONResponse({"error": "not_signed_in"}, status_code=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    session = state.sessions.get(request.cookies.get(state.session_cookie))
+    assert session is not None  # current_principal just resolved it
+
+    status, payload = handle(
+        request.url.path,
+        body,
+        principal=principal,
+        cases=_case_service(request, session),
+        config=config,
+    )
+    return JSONResponse(payload, status_code=status)
+
+
+def _case_service(request: Request, session: Session) -> CaseService:
+    """One service per session, so its read cache is not shared between people."""
+    if session.case_service is not None:
+        return session.case_service  # type: ignore[no-any-return]
+
+    config: Config = request.app.state.config
+    app_client = build_public_client(config)
+    # Rehydrate MSAL from the session's own cache: the token belongs to this
+    # operator and to nobody else, and the provider is bound to that identity
+    # at construction, so nothing downstream can name another account.
+    app_client.token_cache = session.cache
+    provider = DesktopTokenProvider(app_client, config, session.principal)
+    service = CaseService(GraphOperations(GraphClient(provider)))
+    session.case_service = service
+    return service
+
+
 def build_app(config: Config) -> Starlette:
     routes = [
         Route("/healthz", healthz, methods=["GET"]),
@@ -109,6 +175,8 @@ def build_app(config: Config) -> Starlette:
         Route("/auth/callback", callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["POST"]),
         Route("/api/whoami", whoami, methods=["GET"]),
+        Route("/api/requests", api, methods=["POST"]),
+        Route("/api/me", api, methods=["POST"]),
         *[
             Route(path, static, methods=["GET"])
             for path in sorted(ALLOWED_STATIC)
