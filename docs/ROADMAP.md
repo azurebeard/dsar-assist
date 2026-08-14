@@ -15,6 +15,10 @@ better version of the tool that exists today.
 | **5 — Hosted** | FIC spike first, then Bicep, dedicated UAMI, confidential client, `prompt=select_account`, session cookies, append-blob sink, ingress, CA02/CA11 | Same image tag in `ca-dsar-prod-uks-01`; `secrets` returns `[]`; two operators sign in concurrently **as themselves** |
 | **6 — Governance + hardening** | Access reviews, CA03 enforcement decision, immutability policy, IP restrictions, cosign + SBOM, distroless evaluation, CAE step-up drill, WS10 review | The CAE drill run live and recorded in `verification/`. WS10 PASS |
 
+See [`BACKLOG.md`](BACKLOG.md) for everything not on a phase, including the
+template builder (B-02) and the items carried forward from the security
+reviews.
+
 ---
 
 ## Open questions, to be resolved live in Phase 1
