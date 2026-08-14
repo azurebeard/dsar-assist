@@ -114,13 +114,83 @@ class CaseService:
         )
 
     def searches_for(self, case_id: str) -> tuple[Search, ...]:
+        """Every search in a case, each with its own estimate.
+
+        `list_searches` does not carry statistics, so each search is read again
+        individually. That is N+1 calls, and it is the right trade: the
+        alternative is showing a case detail with no numbers on it, which is the
+        screen the operator opened it for.
+        """
         response = self._ops.list_searches(case_id=case_id)
         raw = response.get("value") or []
-        return tuple(parse_search(item) for item in raw if isinstance(item, dict))
+        searches = [parse_search(item) for item in raw if isinstance(item, dict)]
+        return tuple(
+            self.statistics_for(case_id, s.id) if s.id else s for s in searches
+        )
 
     def statistics_for(self, case_id: str, search_id: str) -> Search:
-        response = self._ops.get_statistics(case_id=case_id, search_id=search_id)
-        return parse_search(response.body)
+        """Read one search's estimate, with a fallback when the expand is empty.
+
+        The primary path is `?$expand=lastEstimateStatisticsOperation`, which is
+        unambiguous by construction: the operation reached that way belongs to
+        this search and no other.
+
+        It is not always populated. When it is not, the case operations
+        collection is the only other source — and the documented
+        `ediscoveryEstimateOperation` carries a `search` relationship, so an
+        operation can be attributed to its search rather than guessed at.
+
+        That attribution is the whole point of the fallback. The predecessor
+        matched "newest estimate operation in the case" instead, and with more
+        than one search per case every search reported the same numbers. Six
+        probe queries returning six identical counts is what eventually
+        surfaced it. So this matches on the search reference and returns nothing
+        rather than the newest: no number is recoverable from, and a
+        wrong-but-plausible number is the worst failure this tool can have.
+        """
+        search = parse_search(
+            self._ops.get_statistics(case_id=case_id, search_id=search_id).body
+        )
+        if search.statistics.status:
+            return search
+
+        operation = self._estimate_operation_for(case_id, search_id)
+        if operation is None:
+            return search
+        merged = dict(self._ops.get_statistics(case_id=case_id, search_id=search_id).body)
+        merged["lastEstimateStatisticsOperation"] = operation
+        log.info(
+            "statistics for search %s came from the operations collection; the "
+            "expand returned none",
+            search_id,
+        )
+        return parse_search(merged)
+
+    def _estimate_operation_for(
+        self, case_id: str, search_id: str
+    ) -> dict[str, Any] | None:
+        """The newest estimate operation that names this search, or None."""
+        try:
+            response = self._ops.list_operations(case_id=case_id)
+        except Exception:  # a fallback must not turn a missing number into an error
+            return None
+
+        candidates = []
+        for item in response.get("value") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("action") != "estimateStatistics":
+                continue
+            # Attributed, never guessed. An operation with no search reference
+            # cannot be shown to belong to this search, so it is skipped.
+            reference = item.get("search") or {}
+            if not isinstance(reference, dict) or reference.get("id") != search_id:
+                continue
+            candidates.append(item)
+
+        if not candidates:
+            return None
+        return max(candidates, key=lambda o: str(o.get("createdDateTime", "")))
 
     def invalidate(self) -> None:
         """Drop the read cache. Called after anything that creates a case."""

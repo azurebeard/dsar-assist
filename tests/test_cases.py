@@ -232,3 +232,126 @@ def test_newest_case_first() -> None:
     new["createdDateTime"] = "2026-08-14T00:00:00Z"
     listing = CaseService(FakeOps([{"value": [old, new]}])).list_requests(_principal())  # type: ignore[arg-type]
     assert [c.id for c in listing.cases] == ["new", "old"]
+
+
+# --------------------------------------------- estimate status handling
+
+
+@pytest.mark.parametrize(
+    "status,complete,partial",
+    [
+        ("succeeded", True, False),
+        ("partiallySucceeded", True, True),   # the one that was missing
+        ("running", False, False),
+        ("notStarted", False, False),
+        ("failed", False, False),
+        ("submissionFailed", False, False),
+    ],
+)
+def test_every_documented_status_is_handled(
+    status: str, complete: bool, partial: bool
+) -> None:
+    """caseOperationStatus values, per Microsoft Graph v1.0.
+
+    `partiallySucceeded` was absent from the complete set. Purview returns it
+    when the estimate finished against some locations and not others, which is
+    normal — the counts are real and the portal shows them, but this code called
+    it "running" and the UI waited for a state that had already arrived.
+    """
+    search = parse_search(
+        {"id": "s", "lastEstimateStatisticsOperation": {
+            "status": status, "indexedItemCount": 40}}
+    )
+    assert search.statistics.complete is complete
+    assert search.statistics.partial is partial
+    assert search.statistics.item_count == 40, "counts are real whatever the status"
+
+
+def test_locations_are_mailboxes_plus_sites() -> None:
+    """`or` took the first truthy value, so 2 mailboxes and 3 sites reported 2,
+    and 0 mailboxes with 3 sites reported 3 — inconsistently, depending on which
+    happened to be zero."""
+    search = parse_search(
+        {"id": "s", "lastEstimateStatisticsOperation": {
+            "status": "succeeded", "mailboxCount": 2, "siteCount": 3}}
+    )
+    assert search.statistics.location_count == 5
+    assert search.statistics.mailbox_count == 2
+    assert search.statistics.site_count == 3
+
+
+def test_a_site_only_hit_is_not_lost() -> None:
+    search = parse_search(
+        {"id": "s", "lastEstimateStatisticsOperation": {
+            "status": "succeeded", "mailboxCount": 0, "siteCount": 3}}
+    )
+    assert search.statistics.location_count == 3
+
+
+def test_unindexed_items_are_kept_separate() -> None:
+    """Folding them into the total is how a DSAR response acquires a number
+    nobody can defend."""
+    search = parse_search(
+        {"id": "s", "lastEstimateStatisticsOperation": {
+            "status": "succeeded", "indexedItemCount": 40, "unindexedItemCount": 7}}
+    )
+    assert search.statistics.item_count == 40
+    assert search.statistics.unindexed_count == 7
+
+
+# ---------------------------------- statistics fallback via operations
+
+
+class FallbackOps:
+    """Returns an empty expand, then an operations collection."""
+
+    def __init__(self, operations: list[dict]) -> None:
+        self.operations = operations
+        self.list_calls = 0
+
+    def get_statistics(self, *, case_id: str, search_id: str):  # noqa: ANN201
+        from dsar.graph.client import GraphResponse
+
+        return GraphResponse(200, {"id": search_id, "displayName": "naive"}, {})
+
+    def list_operations(self, *, case_id: str):  # noqa: ANN201
+        from dsar.graph.client import GraphResponse
+
+        self.list_calls += 1
+        return GraphResponse(200, {"value": self.operations}, {})
+
+
+def test_statistics_fall_back_to_an_attributed_operation() -> None:
+    ops = FallbackOps([
+        {"action": "estimateStatistics", "status": "succeeded",
+         "indexedItemCount": 40, "createdDateTime": "2026-08-14T10:00:00Z",
+         "search": {"id": "search-1"}},
+    ])
+    search = CaseService(ops).statistics_for("case", "search-1")  # type: ignore[arg-type]
+    assert search.statistics.item_count == 40
+    assert ops.list_calls == 1
+
+
+def test_the_fallback_never_borrows_another_searchs_numbers() -> None:
+    """The predecessor matched "newest estimate in the case", so with more than
+    one search every search reported the same numbers. No number is recoverable
+    from; a wrong-but-plausible number is not."""
+    ops = FallbackOps([
+        {"action": "estimateStatistics", "status": "succeeded",
+         "indexedItemCount": 999, "createdDateTime": "2026-08-14T11:00:00Z",
+         "search": {"id": "a-different-search"}},
+        {"action": "estimateStatistics", "status": "succeeded",
+         "indexedItemCount": 888, "createdDateTime": "2026-08-14T12:00:00Z"},
+    ])
+    search = CaseService(ops).statistics_for("case", "search-1")  # type: ignore[arg-type]
+    assert search.statistics.item_count is None
+    assert search.statistics.status == ""
+
+
+def test_a_failing_operations_call_does_not_become_an_error() -> None:
+    class Broken(FallbackOps):
+        def list_operations(self, *, case_id: str):  # noqa: ANN201
+            raise RuntimeError("Graph is unhappy")
+
+    search = CaseService(Broken([])).statistics_for("case", "s")  # type: ignore[arg-type]
+    assert search.statistics.item_count is None

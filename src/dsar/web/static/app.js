@@ -509,8 +509,33 @@
         tr.appendChild(el("td", search.display_name || ""));
         // null, not 0 — "no estimate yet" and "found nothing" are different.
         tr.appendChild(el("td", stats.item_count === null ? "—" : String(stats.item_count)));
-        tr.appendChild(el("td", stats.location_count === null ? "—" : String(stats.location_count)));
-        tr.appendChild(el("td", stats.complete ? "complete" : (stats.status || "running")));
+        // Mailboxes and sites shown separately: "1 mailbox" versus "1 mailbox,
+        // 2 sites" is the difference between a naive query and one that looked
+        // at SharePoint, and that difference is the demonstration.
+        let locations = "—";
+        if (stats.location_count !== null && stats.location_count !== undefined) {
+          const parts = [];
+          if (stats.mailbox_count) parts.push(stats.mailbox_count + " mailbox" + (stats.mailbox_count === 1 ? "" : "es"));
+          if (stats.site_count) parts.push(stats.site_count + " site" + (stats.site_count === 1 ? "" : "s"));
+          locations = parts.length ? parts.join(", ") : String(stats.location_count);
+        }
+        tr.appendChild(el("td", locations));
+
+        let statusText;
+        if (stats.partial) {
+          // Not smoothed over. A DSAR response built on a partial count is a
+          // compliance problem, not a rounding error.
+          statusText = "complete (partial — some locations not searched)";
+        } else if (stats.complete) {
+          statusText = "complete";
+        } else if (stats.percent_progress) {
+          statusText = (stats.status || "running") + " — " + stats.percent_progress + "%";
+        } else {
+          statusText = stats.status || "running";
+        }
+        const statusCell = el("td", statusText);
+        if (stats.partial) statusCell.className = "warn";
+        tr.appendChild(statusCell);
 
         const actions = document.createElement("td");
         if (state.canWrite && stats.complete) {

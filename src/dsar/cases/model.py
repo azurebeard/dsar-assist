@@ -46,10 +46,23 @@ class Statistics:
     item_count: int | None = None
     #: Bytes. Graph reports `unindexedItemsSize` separately; both are metadata.
     total_size: int | None = None
+    #: Mailboxes plus sites. Kept alongside the two components rather than
+    #: replacing them, because "3 locations" and "1 mailbox and 2 sites" answer
+    #: different questions and the second is the one that shows a naive query
+    #: never looked at SharePoint.
     location_count: int | None = None
+    mailbox_count: int | None = None
+    site_count: int | None = None
+    #: Items Purview could not index. Not added to `item_count`: they are a
+    #: different kind of fact, and quietly inflating a total is how a DSAR
+    #: response acquires a number nobody can defend.
+    unindexed_count: int | None = None
+    percent_progress: int | None = None
     status: str = ""
-    #: True when an estimate has completed and these numbers mean something.
+    #: True when an estimate has finished and these numbers mean something.
     complete: bool = False
+    #: True when it finished against some locations but not all.
+    partial: bool = False
 
 
 @dataclass(frozen=True)
@@ -109,15 +122,39 @@ def _parse_statistics(raw: Mapping[str, Any]) -> Statistics:
         return Statistics()
 
     status = str(operation.get("status", ""))
-    complete = status.lower() in {"succeeded", "completed"}
+    # Documented caseOperationStatus values: notStarted, submissionFailed,
+    # running, succeeded, partiallySucceeded, failed, unknownFutureValue.
+    #
+    # `partiallySucceeded` was missing, and it is the one that matters: Purview
+    # returns it when the estimate completed against some locations and not
+    # others, which is normal on a tenant with a mailbox it could not reach. The
+    # counts are real and the portal shows them, but this code called it
+    # "running" and the UI waited forever for a state that had already arrived.
+    complete = status.lower() in {"succeeded", "partiallysucceeded", "completed"}
+    #: True when the estimate finished but not against everything it was asked
+    #: to search. Surfaced rather than smoothed over: a DSAR response built on a
+    #: partial count is a compliance problem, not a rounding error.
+    partial = status.lower() == "partiallysucceeded"
+
+    mailboxes = _int_or_none(operation.get("mailboxCount"))
+    sites = _int_or_none(operation.get("siteCount"))
+    # Sum rather than `or`: the original took the first truthy value, so a
+    # search hitting 2 mailboxes and 3 sites reported 2 locations, and one
+    # hitting 0 mailboxes and 3 sites reported 3 — inconsistently, depending on
+    # which happened to be zero. "Locations" means both.
+    locations = None if mailboxes is None and sites is None else (mailboxes or 0) + (sites or 0)
 
     return Statistics(
         item_count=_int_or_none(operation.get("indexedItemCount")),
         total_size=_int_or_none(operation.get("indexedItemsSize")),
-        location_count=_int_or_none(operation.get("mailboxCount"))
-        or _int_or_none(operation.get("siteCount")),
+        location_count=locations,
+        mailbox_count=mailboxes,
+        site_count=sites,
+        unindexed_count=_int_or_none(operation.get("unindexedItemCount")),
+        percent_progress=_int_or_none(operation.get("percentProgress")),
         status=status,
         complete=complete,
+        partial=partial,
     )
 
 

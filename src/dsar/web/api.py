@@ -218,7 +218,7 @@ def _statistics(ctx: Context) -> ApiResult:
             "error": "invalid_input",
             "message": "case_id and search_id are required",
         }
-    return 200, _search_json(ctx.workflow.statistics(case_id, search_id))
+    return 200, _search_json(ctx.cases.statistics_for(case_id, search_id))
 
 
 # ------------------------------------------------------------------ writes
@@ -335,8 +335,13 @@ def _search_json(search: Any) -> dict[str, Any]:
             "item_count": stats.item_count,
             "total_size": stats.total_size,
             "location_count": stats.location_count,
+            "mailbox_count": stats.mailbox_count,
+            "site_count": stats.site_count,
+            "unindexed_count": stats.unindexed_count,
+            "percent_progress": stats.percent_progress,
             "status": stats.status,
             "complete": stats.complete,
+            "partial": stats.partial,
         },
     }
 
