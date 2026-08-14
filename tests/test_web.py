@@ -169,8 +169,14 @@ def test_a_sustained_status_belongs_to_the_case_view(client: TestClient) -> None
     script = client.get("/app.js").text
     assert script.count('state.view !== "case"') >= 2
     assert "state.view = name" in script
-    # Non-busy messages clear themselves rather than becoming furniture.
-    assert "setTimeout(() => status(null), 4000)" in script
+    # Every status expires — asserted as the property rather than the exact
+    # expression, because pinning the literal is how this test broke when the
+    # expiry was improved from "non-busy only" to "both, with different
+    # timeouts". A test that fails on a better implementation trains people to
+    # edit tests rather than read them.
+    status_fn = script.split("function status(text, busy)", 1)[1].split("\n  }", 1)[0]
+    assert "state.statusTimer = setTimeout" in status_fn
+    assert "status(null)" in status_fn
 
 
 def test_export_message_says_where_not_what_it_cannot_do(client: TestClient) -> None:
@@ -185,3 +191,31 @@ def test_export_message_says_where_not_what_it_cannot_do(client: TestClient) -> 
         line for line in script.splitlines() if "Export started." in line
     )
     assert "cannot" not in export_line
+
+
+def test_a_busy_status_expires_if_it_is_not_renewed(client: TestClient) -> None:
+    """A spinner is a claim that something is still happening. It has to be
+    renewed to keep making it — otherwise any path that forgets to clear it
+    leaves the interface asserting work that ended minutes ago, which is what a
+    completed case did: "Estimating — 2m 38s" beside a table saying complete."""
+    script = client.get("/app.js").text
+    assert "busy ? 15000 : 4000" in script
+
+
+def test_the_ticker_clears_rather_than_returning_bare(client: TestClient) -> None:
+    """`if (!state.running) return;` left whatever was on screen. Nothing
+    running means stop asserting that something is."""
+    script = client.get("/app.js").text
+    waiting = script.split("function renderWaiting()", 1)[1].split("function untilNextCheck", 1)[0]
+    assert "if (!state.running) {" in waiting
+    assert "stopTicking()" in waiting and "status(null)" in waiting
+
+
+def test_countdown_to_the_next_check(client: TestClient) -> None:
+    """The gap between polls stretches to a minute; without a countdown that
+    pause is indistinguishable from a stall."""
+    script = client.get("/app.js").text
+    assert "next check in " in script
+    assert "state.nextPollAt = Date.now() + state.pollDelay" in script
+    # And it must not outlive the work it counts towards.
+    assert script.count("state.nextPollAt = null") >= 3

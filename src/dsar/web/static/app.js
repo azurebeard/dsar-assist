@@ -23,6 +23,7 @@
     case_id: null, reference: null, canWrite: false,
     pollTimer: null, pollDelay: 10000, pollStarted: null, generated: null,
     tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
+    nextPollAt: null,
   };
 
   // Every API call is a POST, even the reads. Browsers do not send Origin on a
@@ -76,9 +77,12 @@
     setText("status-text", text);
     $("status-spinner").toggleAttribute("hidden", !busy);
     bar.removeAttribute("hidden");
-    if (!busy) {
-      state.statusTimer = setTimeout(() => status(null), 4000);
-    }
+    // Both kinds expire, for different reasons. A finished message is read once
+    // and then becomes furniture. A spinner is a claim that something is still
+    // happening, and it has to be renewed to keep making it — otherwise any
+    // path that forgets to clear it leaves the interface asserting work that
+    // ended minutes ago, which is what happened here.
+    state.statusTimer = setTimeout(() => status(null), busy ? 15000 : 4000);
   }
 
   // Disables the button for the duration and restores its label afterwards.
@@ -466,7 +470,9 @@
   // minute and a stale clock is the thing being fixed.
   function schedulePoll() {
     if (state.pollTimer) clearTimeout(state.pollTimer);
+    state.nextPollAt = Date.now() + state.pollDelay;
     state.pollTimer = setTimeout(async () => {
+      state.nextPollAt = null;
       const done = await refreshCase();
       if (done) {
         state.pollTimer = null;
@@ -488,10 +494,18 @@
 
   function stopTicking() {
     if (state.tickTimer) { clearInterval(state.tickTimer); state.tickTimer = null; }
+    state.nextPollAt = null;
   }
 
   function renderWaiting() {
-    if (!state.running) return;
+    if (!state.running) {
+      // Nothing is running any more, so stop asserting that something is.
+      // The previous version returned without clearing, which left the last
+      // "Estimating — 2m 38s" on screen beside a table saying "complete".
+      stopTicking();
+      status(null);
+      return;
+    }
     if (state.view !== "case") {
       // The view moved on. Stop rather than narrating a page nobody is looking
       // at — and stop the clock with it.
@@ -504,7 +518,17 @@
       (state.total === 1 ? "" : "s") + " still running \u2014 " + elapsed() +
       " so far. This page updates on its own; you can leave it.");
     show("poll-note");
-    status("Estimating \u2014 " + elapsed() + " elapsed", true);
+    status("Estimating \u2014 " + elapsed() + " elapsed" + untilNextCheck(), true);
+  }
+
+  function untilNextCheck() {
+    // The gap between polls stretches to a minute. Without a countdown that
+    // pause is indistinguishable from a stall, which is the same doubt the
+    // elapsed counter was added to remove.
+    if (!state.nextPollAt) return "";
+    const seconds = Math.max(0, Math.round((state.nextPollAt - Date.now()) / 1000));
+    if (!seconds) return " \u00b7 checking\u2026";
+    return " \u00b7 next check in " + seconds + "s";
   }
 
   function elapsed() {
@@ -605,11 +629,13 @@
         startTicking();
       } else if (rows.length) {
         stopTicking();
+        state.nextPollAt = null;
         setText("poll-note", "All estimates complete after " + elapsed() + ".");
         show("poll-note");
         status("Estimates complete.", false);
       } else {
         stopTicking();
+        state.nextPollAt = null;
         hide("poll-note");
         status(null);
       }
