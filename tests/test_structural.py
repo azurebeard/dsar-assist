@@ -79,6 +79,18 @@ def _python_files(subdir: str) -> list[Path]:
     )
 
 
+def _rel(path: Path) -> str:
+    """Repo-relative path, always with forward slashes.
+
+    `str(Path.relative_to())` yields backslashes on Windows, so every allowlist
+    below silently stopped matching there — six structural tests failed on
+    `windows-latest` and passed everywhere else. That is precisely the class of
+    failure the cross-platform CI matrix exists to catch, and precisely how the
+    predecessor died.
+    """
+    return path.relative_to(REPO_ROOT).as_posix()
+
+
 def _scan(pattern: str, *, flags: int = 0, files: list[Path] | None = None) -> list[str]:
     """Return 'relpath:lineno' for every line matching `pattern`."""
     rx = re.compile(pattern, flags)
@@ -87,7 +99,7 @@ def _scan(pattern: str, *, flags: int = 0, files: list[Path] | None = None) -> l
         text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, line in enumerate(text.splitlines(), start=1):
             if rx.search(line):
-                hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
+                hits.append(f"{_rel(path)}:{lineno}")
     return hits
 
 
@@ -406,7 +418,7 @@ def test_docs_never_show_a_bare_dsar_command() -> None:
             if not in_block:
                 continue
             if stripped.startswith("dsar ") and not stripped.startswith(prefixes):
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {stripped}")
+                offenders.append(f"{_rel(path)}:{lineno}: {stripped}")
     assert offenders == []
 
 
@@ -434,7 +446,7 @@ def test_no_print_outside_the_cli_surface() -> None:
     permitted = {"src/dsar/doctor/report.py"}
     offenders: list[str] = []
     for path in _python_files("src/dsar"):
-        rel = str(path.relative_to(REPO_ROOT))
+        rel = _rel(path)
         if rel in permitted:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
