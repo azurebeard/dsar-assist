@@ -174,6 +174,13 @@ def test_no_client_secret_anywhere() -> None:
         "tests/test_doctor.py",
         "tests/test_hardening.py",
         "tests/test_structural.py",
+        # Probes and provisioning assert the *absence* of a secret: the FIC
+        # probe checks no client_secret is sent alongside the assertion, and
+        # provision.sh refuses a registration holding password credentials.
+        # Naming a thing in order to prove it is not there is the opposite of
+        # using it.
+        "verification/probe_fic_assertion_offline.py",
+        "infra/entra/provision.sh",
     }
     hits = [
         hit
