@@ -254,3 +254,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          # The action posts a PR comment summarising what it found. On a
+          # Dependabot pull request the GITHUB_TOKEN is read-only, so that
+          # write fails with "Resource not accessible by integration" and the
+          # whole job goes red — on every dependency bump, for a reason that
+          # has nothing to do with the bump.
+          #
+          # That is worse than noise. A bump that genuinely breaks something
+          # looks identical to one that does not, so the signal the scan exists
+          # to provide is gone. The scan itself still runs and still fails the
+          # job on a real finding; only the comment is dropped, and the finding
+          # is in the log either way.
+          GITLEAKS_ENABLE_COMMENTS: "false"
