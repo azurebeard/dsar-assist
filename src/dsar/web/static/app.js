@@ -23,7 +23,7 @@
     case_id: null, reference: null, canWrite: false,
     pollTimer: null, pollStarted: null, generated: null,
     tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
-    nextPollAt: null,
+    nextPollAt: null, statusBusy: false,
     //: Which narrowings have been applied to each query, by template id. The
     //: delta is only the expansion's contribution while these two agree; see
     //: renderComparability().
@@ -80,7 +80,8 @@
   function status(text, busy) {
     const bar = $("status");
     if (state.statusTimer) { clearTimeout(state.statusTimer); state.statusTimer = null; }
-    if (!text) { bar.setAttribute("hidden", ""); return; }
+    if (!text) { state.statusBusy = false; bar.setAttribute("hidden", ""); return; }
+    state.statusBusy = !!busy;
     setText("status-text", text);
     $("status-spinner").toggleAttribute("hidden", !busy);
     bar.removeAttribute("hidden");
@@ -166,7 +167,17 @@
 
   function renderSignedIn(me) {
     state.canWrite = !!me.can_write;
-    $("identity").replaceChildren(el("strong", me.upn || me.oid));
+    // Every role held, not the one that decided the outcome. App roles in
+    // Entra are ADDITIVE — a user assigned both carries both in the token, and
+    // nothing "wins". Showing only the effect made that look like a conflict
+    // being resolved somewhere, which it is not: DSAR.Operator simply implies
+    // everything DSAR.Auditor allows, so holding both is redundant rather than
+    // contradictory. Saying so on the page is cheaper than explaining it.
+    const identity = [el("strong", me.upn || me.oid)];
+    for (const role of me.roles || []) {
+      identity.push(el("span", role, "chip"));
+    }
+    $("identity").replaceChildren(...identity);
     hide("signed-out");
     show("nav");
     if (!state.canWrite) {
@@ -593,12 +604,27 @@
 
   // ----------------------------------------------------- case detail
 
+  // Everything the previous case left on the page. The view is reused, so
+  // without this the new case's title sits above the OLD case's searches,
+  // statistics and delta until the fetch returns — which on a case with no
+  // searches yet reads as results that are not there, and on a slow network
+  // reads as the wrong case's results entirely.
+  function clearCaseView() {
+    $("searches-body").replaceChildren();
+    for (const id of ["searches-table", "delta", "poll-note"]) hide(id);
+    hide("searches-empty");
+    setText("case-portal", "");
+  }
+
   async function openCase(item) {
     state.case_id = item.case_id;
     state.pollStarted = Date.now();
     state.running = 0;
     state.total = 0;
     setText("case-title", item.reference || item.display_name || "Case");
+    // Before the view is shown, not after — a clear that happens after the
+    // paint is a flicker of the wrong data rather than an absence of it.
+    clearCaseView();
     showView("case");
 
     const done = await refreshCase();
@@ -631,8 +657,16 @@
     }, POLL_INTERVAL_MS);
   }
 
+  //: Tears down the interval and nothing else. Separate from stopTicking()
+  //: because that one also clears a busy status, and startTicking calls it
+  //: immediately before renderWaiting sets one.
+  function clearTicker() {
+    if (state.tickTimer) { clearInterval(state.tickTimer); state.tickTimer = null; }
+    state.nextPollAt = null;
+  }
+
   function startTicking() {
-    stopTicking();
+    clearTicker();
     // One second, and it touches only text already on the page — no request,
     // no token spent. The Graph poll backs off to a minute, so without this the
     // counter is stale for up to a minute, which is the interval over which a
@@ -641,8 +675,16 @@
   }
 
   function stopTicking() {
-    if (state.tickTimer) { clearInterval(state.tickTimer); state.tickTimer = null; }
-    state.nextPollAt = null;
+    clearTicker();
+    // A spinner is a claim that something is still happening, and the ticker
+    // is what renews that claim. When the ticker stops, the claim has to go
+    // with it — otherwise the elapsed figure freezes while the spinner keeps
+    // turning beside a table that says complete, which is the most confusing
+    // state the interface can be in: it looks like work, and it is not.
+    //
+    // Tied to the ticker rather than fixed at each call site, because there
+    // are several call sites and the next one added is the one that forgets.
+    if (state.statusBusy) status(null);
   }
 
   function renderWaiting() {

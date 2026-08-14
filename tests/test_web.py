@@ -320,3 +320,64 @@ def test_the_front_end_parses() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_opening_a_case_clears_the_previous_one(client: TestClient) -> None:
+    """The case view is reused, so the new case's title lands above the old
+    case's searches until the fetch returns.
+
+    On a case with no searches yet that reads as results which are not there;
+    on a slow network it reads as a different case's results entirely. Reported
+    from the deployed instance as "cached results page appeared after a new
+    case was created".
+    """
+    script = client.get("/app.js").text
+    assert "function clearCaseView()" in script
+    open_case = script.split("async function openCase(item)", 1)[1].split("\n  }", 1)[0]
+    # Before showView, not after — clearing after the paint is a flicker of the
+    # wrong data rather than an absence of it.
+    assert open_case.index("clearCaseView()") < open_case.index('showView("case")')
+
+
+def test_the_spinner_cannot_outlive_the_ticker(client: TestClient) -> None:
+    """A spinner claims work is ongoing; the ticker is what renews the claim.
+
+    When the ticker stops the claim has to go with it, or the elapsed figure
+    freezes while the spinner keeps turning beside a table that says complete —
+    the most confusing state the interface can be in, because it looks like
+    work and is not.
+
+    Asserted on the coupling rather than on any one call site: there are
+    several, and the next one added is the one that forgets.
+    """
+    script = client.get("/app.js").text
+    stop = script.split("function stopTicking()", 1)[1].split("\n  }", 1)[0]
+    assert "if (state.statusBusy) status(null)" in stop
+
+    # startTicking must NOT go through stopTicking, or it would clear the busy
+    # status renderWaiting sets immediately before it.
+    start = script.split("function startTicking()", 1)[1].split("\n  }", 1)[0]
+    assert "stopTicking()" not in start
+    assert "clearTicker()" in start
+
+    # And the flag has to be maintained, or the coupling above never fires.
+    status_fn = script.split("function status(text, busy)", 1)[1].split("\n  }", 1)[0]
+    assert "state.statusBusy = !!busy" in status_fn
+    assert "state.statusBusy = false" in status_fn
+
+
+def test_every_role_held_is_shown_not_just_the_effective_one(
+    client: TestClient,
+) -> None:
+    """App roles in Entra are additive: a user assigned both carries both, and
+    nothing "wins".
+
+    Showing only the effect — the create button being enabled — made that look
+    like a conflict resolved somewhere, which it is not. `DSAR.Operator`
+    implies everything `DSAR.Auditor` allows, so holding both is redundant
+    rather than contradictory, and the page should say which are held.
+    """
+    script = client.get("/app.js").text
+    signed_in = script.split("function renderSignedIn(me)", 1)[1].split("\n  }", 1)[0]
+    assert "me.roles" in signed_in
+    assert "replaceChildren(...identity)" in signed_in

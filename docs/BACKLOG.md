@@ -309,6 +309,29 @@ on purpose.
 
 ---
 
+## Not doing · A combined Auditor + Operator role
+
+**Asked 2026-08-14. Recommendation: no.**
+
+App roles in Entra are **additive**. A user assigned both carries
+`["DSAR.Auditor", "DSAR.Operator"]` in the token and nothing "wins" — it only
+looked that way because the page showed the effect and not the roles.
+
+`can_write` is `DSAR.Operator in roles`, and reading is unconditional. So
+**Operator is already a strict superset of Auditor**: holding both is redundant
+rather than contradictory, and a third value would add drift surface across the
+registration, `KNOWN_ROLES`, the code and provisioning for no new capability.
+
+The two-role split also encodes a real separation of duties — an auditor who
+**cannot** create cases or initiate exports. Collapsing it is the opposite of
+what a DSAR tool wants.
+
+⚠️ **One consequence worth knowing.** Assigning `DSAR.Auditor` to someone who
+already holds `DSAR.Operator` restricts nothing. Roles add; they do not
+subtract. Removing Operator is the only way to make someone read-only.
+
+---
+
 ## B-10 · Comparability warning — the two residuals
 
 **Size:** small · **Raised by:** `WS10-review-comparability-2026-08-14`
