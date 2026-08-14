@@ -278,3 +278,11 @@ def test_a_wrong_tenant_token_is_logged(caplog) -> None:
         with pytest.raises(ClaimError):
             build_principal({"tid": "other", "oid": "o"}, expected_tenant_id="t")
     assert any("REFUSED" in r.getMessage() for r in caplog.records)
+
+
+def test_the_poll_floor_covers_the_endpoint_the_ui_actually_polls() -> None:
+    """The floor was on /api/statistics, which the UI never calls — it polls
+    /api/case. A limit on an endpoint nobody calls is not a limit."""
+    from dsar.web.app import _POLLED_ENDPOINTS
+
+    assert "/api/case" in _POLLED_ENDPOINTS

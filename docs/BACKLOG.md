@@ -6,7 +6,15 @@ reviews are consolidated here so they stop living in three documents.
 
 ---
 
-## B-01 · Phase 3 — the audit trail
+## B-01 · Phase 3 — the audit trail ✅ DONE 2026-08-14
+
+Built. Hash-chained JSONL, `dsar audit verify` names the first break by `seq`,
+`dsar audit tail` reads it offline with no network and no sign-in. Verified end
+to end: an edited record is reported as `altered`, a deleted one produces
+`broken link` + `out of order`, and the subject's identity appears nowhere —
+only a case-scoped pseudonym.
+
+Original entry below, kept for the reasoning.
 
 **Size:** ~1 day · **Blocks:** the product claim
 
@@ -32,9 +40,31 @@ inside the tool built to control that risk. Store a case-scoped pseudonym.
 
 ---
 
-## B-02 · Template builder
+## B-02 · Template builder — PARKED, shape decided
 
-**Size:** 2–3 days done properly · **Requested:** 2026-08-14
+**Decision 2026-08-14:** parked as a runtime feature. If custom templates are
+wanted, they arrive as **JSON compiled in at build time** — a file in the repo,
+reviewed and shipped with the image.
+
+That is a better shape than the runtime builder analysed below, for two reasons
+the analysis surfaced:
+
+* **It deletes the persistence problem outright.** No local file to go missing
+  on the second machine, no new Graph consent to justify, no store that exists
+  in one mode and not the other. A template ships with the image, so every
+  operator running that image has it.
+* **It keeps the review gate.** The scope risk below is real — a template that
+  narrows too far under-discloses, and under-disclosure is a compliance
+  failure. A template arriving through a pull request gets read by someone
+  before it can shape a search. A template built at runtime does not.
+
+The cost is that an operator cannot invent one mid-request, which is the right
+trade for an artefact that decides what a subject access response contains.
+
+The analysis below is kept because it is what led to that decision, and because
+the scope and trust problems still apply to a build-time file.
+
+**Size if revisited:** 2–3 days · **Requested:** 2026-08-14
 
 Let an operator compose their own narrowing, name it, and reuse it — so a
 recurring shape of request (employment grievance, third-party disclosure, a
@@ -198,14 +228,11 @@ against the cost to diagnosis.
 
 ---
 
-## B-09 · Server-side query floor for `/api/case`
+## B-09 · Server-side query floor for `/api/case` ✅ DONE 2026-08-14
 
-**Size:** small
-
-The statistics poll has a 5-second server-side floor. `/api/case` does not, and
-it is the one the UI actually polls — it is covered only by the 120/min account
-limit. Now that polling is a flat 60s the exposure is small, but the floor
-belongs on the endpoint that is polled rather than the one that is not.
+The floor was on `/api/statistics`, which the UI never calls — it polls
+`/api/case`. A limit on an endpoint nobody calls is not a limit. Both are now
+covered.
 
 ---
 

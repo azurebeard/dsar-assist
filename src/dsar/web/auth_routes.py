@@ -21,6 +21,9 @@ from starlette.responses import (
     Response,
 )
 
+from dsar.audit.record import Action, Outcome
+from dsar.audit.sink import build_sink
+from dsar.audit.trail import AuditTrail
 from dsar.auth.claims import RoleEnforcement, build_principal
 from dsar.auth.errors import NotAssigned
 from dsar.auth.msal_client import build_public_client, flow_extras, scopes_for
@@ -54,6 +57,10 @@ class AuthState:
         self.sessions = SessionStore()
         self.flows = FlowStore()
         self.login_limiter = RateLimiter(*LOGIN_LIMIT)
+        # One trail per process: the sequence and the chain head are process
+        # state, and two writers with two heads produce two chains that both
+        # look valid and neither of which is the record.
+        self.trail = AuditTrail(build_sink(config.audit_dir))
         self.api_limiter = RateLimiter(*API_LIMIT)
         self.poll_floor = MinInterval(POLL_FLOOR_SECONDS)
         self.session_cookie, self.flow_cookie = cookie_names(config.mode.is_hosted)
@@ -164,6 +171,15 @@ async def callback(request: Request) -> Response:
             enforcement=state.role_enforcement,
         )
     except NotAssigned as exc:
+        # A refused sign-in is recorded. A trail holding only successes
+        # describes a system where nobody is ever turned away.
+        state.trail.write(
+            Action.SIGN_IN_REFUSED,
+            Outcome.DENIED,
+            actor_oid=str((result.get("id_token_claims") or {}).get("oid", "")),
+            tenant_id=config.tenant_id,
+            detail="no DSAR app role",
+        )
         # Distinct from a Purview failure, and worth saying so: this is an
         # access request to whoever owns the enterprise app, not a role-group
         # question.
@@ -176,6 +192,15 @@ async def callback(request: Request) -> Response:
         log.error("ID token validation failed: %s", type(exc).__name__)
         return HTMLResponse("<h1>Sign-in failed</h1>", status_code=400)
 
+    state.trail.write(
+        Action.SIGN_IN,
+        Outcome.OK,
+        actor_oid=principal.oid,
+        actor_upn=principal.upn,
+        tenant_id=principal.tenant_id,
+        uti=principal.uti,
+        detail=", ".join(sorted(principal.roles)) or "no DSAR role",
+    )
     session = state.sessions.create(principal, app.token_cache)
     log.info(
         "signed in: oid=%s roles=%s uti=%s",
@@ -211,6 +236,16 @@ async def logout(request: Request) -> Response:
     if not origin_ok(request, expected):
         return JSONResponse({"error": "bad_origin"}, status_code=403)
 
+    session = state.sessions.get(request.cookies.get(state.session_cookie))
+    if session is not None:
+        state.trail.write(
+            Action.SIGN_OUT,
+            Outcome.OK,
+            actor_oid=session.principal.oid,
+            actor_upn=session.principal.upn,
+            tenant_id=session.principal.tenant_id,
+            uti=session.principal.uti,
+        )
     state.sessions.remove(request.cookies.get(state.session_cookie))
 
     response = RedirectResponse("/", status_code=302)

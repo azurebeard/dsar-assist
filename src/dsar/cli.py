@@ -49,6 +49,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="do not try to open a browser (implied inside a container)",
     )
 
+    audit = sub.add_parser("audit", help="read and verify the audit trail")
+    audit_sub = audit.add_subparsers(dest="audit_command", metavar="<verb>")
+    audit_verify = audit_sub.add_parser(
+        "verify", help="recompute the hash chain and name the first break"
+    )
+    audit_verify.add_argument(
+        "--json", action="store_true", dest="as_json", help="machine-readable"
+    )
+    audit_tail = audit_sub.add_parser("tail", help="show the most recent records")
+    audit_tail.add_argument(
+        "-n", type=int, default=20, dest="count", help="how many (default 20)"
+    )
+
     doctor = sub.add_parser(
         "doctor", help="diagnose configuration, packaging and connectivity"
     )
@@ -73,6 +86,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         from dsar.doctor.report import run_doctor
 
         return run_doctor(offline=args.offline, as_json=args.as_json)
+
+    if args.command == "audit":
+        from dsar.audit.report import run_audit
+
+        return run_audit(
+            getattr(args, "audit_command", None),
+            as_json=getattr(args, "as_json", False),
+            count=getattr(args, "count", 20),
+        )
 
     if args.command == "up":
         from dsar.web.app import serve

@@ -58,6 +58,11 @@ BIND_HOST = "0.0.0.0"  # noqa: S104 — see module docstring
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+#: Endpoints the UI calls on a timer. A client bug on one of these becomes a
+#: tenant problem, because every call spends the operator's own Graph token and
+#: Purview throttles the account rather than the process.
+_POLLED_ENDPOINTS = frozenset({"/api/case", "/api/statistics"})
+
 
 async def healthz(request: Request) -> Response:
     """Liveness. Deliberately says nothing about identity or tenant.
@@ -152,9 +157,11 @@ async def api(request: Request) -> Response:
     # The statistics poll is the one call the UI makes on a timer. The client
     # already backs off 10s -> 30s -> 60s; this is the floor that holds when
     # the client is wrong, which is the only time a floor matters.
-    if request.url.path == "/api/statistics":
-        search_id = str(body.get("search_id", ""))
-        wait = state.poll_floor.check(f"{principal.oid}:{search_id}")
+    if request.url.path in _POLLED_ENDPOINTS:
+        # The floor was on /api/statistics, which the UI does not poll — it
+        # polls /api/case. A limit on the endpoint nobody calls is not a limit.
+        target = str(body.get("search_id") or body.get("case_id") or "")
+        wait = state.poll_floor.check(f"{request.url.path}:{principal.oid}:{target}")
         if wait is not None:
             return _too_many(wait)
 
@@ -198,7 +205,10 @@ def _session_services(
     app_client.token_cache = session.cache
     provider = DesktopTokenProvider(app_client, config, session.principal)
     operations = GraphOperations(GraphClient(provider))
-    services = (CaseService(operations), Workflow(operations, session.principal))
+    services = (
+        CaseService(operations),
+        Workflow(operations, session.principal, request.app.state.auth.trail),
+    )
     session.case_service = services
     return services
 

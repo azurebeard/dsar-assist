@@ -590,7 +590,12 @@ def test_no_print_outside_the_cli_surface() -> None:
     token ends up on stdout, bypassing the redaction filter attached to the
     logging handlers.
     """
-    permitted = {"src/dsar/doctor/report.py"}
+    permitted = {
+        # The two modules whose whole job is speaking to a person at a
+        # terminal. Everything else logs, so the redaction filter applies.
+        "src/dsar/doctor/report.py",
+        "src/dsar/audit/report.py",
+    }
     offenders: list[str] = []
     for path in _python_files("src/dsar"):
         rel = _rel(path)
@@ -652,3 +657,67 @@ def test_path_segments_cannot_escape_the_operations_table() -> None:
     assert spy.paths == [
         "/security/cases/ediscoveryCases/01f85886-7bef-4a22-a27d-18bf9733bbc8"
     ]
+
+
+def test_the_audit_sink_has_no_mutating_method() -> None:
+    """Append-only because there is no other verb, not because one is guarded.
+
+    The predecessor enforced this with SQLite triggers — correct, and a
+    guarantee that cannot travel, because it lives inside the engine. A
+    Protocol with no update, delete or truncate travels with the record.
+    """
+    from dsar.audit.sink import AuditSink
+
+    surface = {name for name in dir(AuditSink) if not name.startswith("_")}
+    assert surface == {"append", "head"}, f"AuditSink grew a method: {surface}"
+
+
+def test_nothing_in_the_audit_package_can_rewrite_a_file() -> None:
+    """A sink that can open for writing, truncate or unlink is a sink that can
+    edit history. Checked by AST, so a new file cannot quietly acquire it."""
+    import ast
+
+    banned_calls = {"remove", "unlink", "truncate", "rmtree", "replace", "rename"}
+    offenders: list[str] = []
+
+    for path in _python_files("src/dsar/audit"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+            if name in banned_calls:
+                offenders.append(f"{_rel(path)}:{node.lineno} {name}()")
+            # `open(..., "w")` and friends truncate. Append and read do not.
+            if name == "open":
+                for arg in list(node.args[1:2]) + [
+                    kw.value for kw in node.keywords if kw.arg == "mode"
+                ]:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        if any(c in arg.value for c in ("w", "x", "+")):
+                            offenders.append(
+                                f"{_rel(path)}:{node.lineno} open(mode={arg.value!r})"
+                            )
+    assert offenders == []
+
+
+def test_the_audit_record_cannot_carry_subject_data() -> None:
+    """The field names are the control.
+
+    There is no field for a name, an address, an employee id or a query — so a
+    caller cannot record one without changing the record shape, which is a
+    visible diff. Writing those to a durable local file would create a second,
+    ungoverned copy of exactly the third-party personal data this tool exists
+    to handle carefully.
+    """
+    from dsar.audit.record import AuditRecord
+
+    fields = set(AuditRecord.__dataclass_fields__)
+    forbidden = {
+        "subject_email", "subject_name", "primary_email", "display_name",
+        "query", "content_query", "kql", "employee_id", "proxy_addresses",
+        "other_mails", "aliases", "mentions",
+    }
+    assert not (fields & forbidden), f"audit record grew: {fields & forbidden}"
+    # The subject appears as a pseudonym and in no other form.
+    assert "subject_ref" in fields

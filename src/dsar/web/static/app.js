@@ -274,6 +274,7 @@
     try {
       status("Looking the subject up in the directory\u2026", true);
       const { status: code, payload } = await api("/api/expand", {
+        case_id: state.case_id,
         primary_email: $("primary-email").value.trim(),
         display_name: $("display-name").value.trim(),
         other_emails: lines("other-emails"),

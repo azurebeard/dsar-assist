@@ -248,7 +248,9 @@ def _expand(ctx: Context) -> ApiResult:
     """
     subject = build_subject(dict(ctx.body))
     expansion = ctx.workflow.expand(
-        subject, identity_expansion=ctx.config.identity_expansion
+        subject,
+        identity_expansion=ctx.config.identity_expansion,
+        case_id=ctx.text("case_id"),
     )
     return 200, expansion.to_json()
 
