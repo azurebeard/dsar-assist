@@ -435,3 +435,86 @@ def test_hosted_builds_a_confidential_client(monkeypatch, config_env, offline_ms
     desktop = build_client(load_config(), http_client=FakeHttpClient())
     assert isinstance(desktop, msal.PublicClientApplication)
     assert not getattr(desktop, "client_credential", None)
+
+
+def test_the_provider_refuses_an_account_that_is_not_the_principal(
+    config_env, offline_msal
+) -> None:
+    """WS10 SEC-M-04. Token acquisition must be bound to the audited actor.
+
+    The provider took `accounts[0]` — positional, unfiltered, never compared to
+    the principal — while its docstring claimed it was "bound to one identity
+    at construction, so nothing downstream can name another account even by
+    mistake".
+
+    Unreachable today: one session, one cache, one account. The failure mode if
+    it ever became reachable is not a wrong token — it is a Graph call made as
+    operator A while every audit record for it names operator B, with the hash
+    chain attesting to the wrong name. That is the one failure this audit trail
+    exists to make impossible, so it is enforced rather than described.
+    """
+    from dsar.auth.desktop import DesktopTokenProvider
+    from dsar.auth.errors import ReauthRequired
+    from dsar.auth.msal_client import build_client
+    from dsar.config import load_config
+    from tests.fakes import FakeHttpClient
+
+    class _TwoAccounts:
+        """Someone else's account sits first in the cache."""
+
+        def get_accounts(self):  # type: ignore[no-untyped-def]
+            return [
+                {"home_account_id": "someone-else.tid", "username": "victim@x.test"},
+                {"home_account_id": "ours-oid.tid", "username": "ours@x.test"},
+            ]
+
+    config = load_config()
+    app = build_client(config, http_client=FakeHttpClient())
+    app.get_accounts = _TwoAccounts().get_accounts  # type: ignore[method-assign]
+
+    ours = DesktopTokenProvider(app, config, Principal(oid="ours-oid", tenant_id=TENANT))
+    chosen = ours._account_for_principal()
+    assert chosen is not None
+    assert chosen["home_account_id"] == "ours-oid.tid", "picked by position, not identity"
+
+    # And an operator with no cached account is refused, never handed a
+    # stranger's. Falling back to position is what made this possible.
+    nobody = DesktopTokenProvider(
+        app, config, Principal(oid="not-in-the-cache", tenant_id=TENANT)
+    )
+    assert nobody._account_for_principal() is None
+    with pytest.raises(ReauthRequired, match="no cached account matches"):
+        nobody.get_token()
+
+
+def test_logout_clears_the_cookie_in_hosted_mode_too(
+    monkeypatch, config_env, offline_msal
+) -> None:
+    """WS10 SEC-M-05. A `__Host-` cookie deletion without `Secure` is rejected.
+
+    RFC 6265bis §4.1.3.2 requires a user agent to reject a `__Host-`-prefixed
+    cookie that does not carry `Secure`, and Starlette's `delete_cookie`
+    defaults to `secure=False` — so the deletion was discarded and the cookie
+    survived sign-out for its full 8-hour Max-Age.
+
+    Bounded: the server-side session is destroyed either way, so the retained
+    value resolves to nothing. What was lost is the stated property.
+
+    The existing test could not catch it — it runs against the desktop fixture,
+    where the cookie has no prefix and the browser would accept the deletion.
+    """
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_UAMI_CLIENT_ID", "99999999-8888-7777-6666-555555555555")
+    hosted = TestClient(build_app(load_config()), follow_redirects=False)
+
+    response = hosted.post(
+        "/auth/logout", headers={"Origin": "https://dsar.example.co.uk"}
+    )
+    deletions = [c for c in response.headers.get_list("set-cookie") if "Max-Age=0" in c]
+    assert deletions, "logout set no deletion cookie"
+    for cookie in deletions:
+        assert "__Host-" in cookie
+        # Without this the browser discards the deletion entirely.
+        assert "Secure" in cookie, cookie
+        assert "Path=/" in cookie

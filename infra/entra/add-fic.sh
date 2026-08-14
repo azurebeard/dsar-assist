@@ -112,8 +112,13 @@ Two things to do before trusting it.
      az ad app show --id ${APP_ID} \\
        --query "{passwords: passwordCredentials, certs: keyCredentials}"
 
-   Both must be empty. An app management policy should also be blocking
-   passwordAddition — see provision.sh.
+   Both must be empty. provision.sh attaches an app management policy blocking
+   passwordAddition to both registrations, which is what keeps them empty —
+   confirm it is attached:
+
+     az rest --method GET --uri \\
+       "https://graph.microsoft.com/v1.0/applications/<objectId>/appManagementPolicies" \\
+       --query "length(value)"
 
 2. Prove the exchange, from inside the container, with no side effects:
 

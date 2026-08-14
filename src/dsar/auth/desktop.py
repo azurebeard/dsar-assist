@@ -48,9 +48,11 @@ class DesktopTokenProvider:
         return self._principal
 
     def get_token(self, *, claims_challenge: str | None = None) -> str:
-        account = self._account or self._first_account()
+        account = self._account or self._account_for_principal()
         if account is None:
-            raise ReauthRequired("no account in the cache; sign in again")
+            raise ReauthRequired(
+                "no cached account matches the signed-in operator; sign in again"
+            )
 
         result = self._app.acquire_token_silent_with_error(
             scopes_for(self._config),
@@ -90,6 +92,42 @@ class DesktopTokenProvider:
 
         return f"/auth/login?claims={quote(claims_challenge, safe='')}"
 
-    def _first_account(self) -> dict[str, Any] | None:
+    def _account_for_principal(self) -> dict[str, Any] | None:
+        """The cached account belonging to THIS principal, or nothing.
+
+        This used to return `accounts[0]` — positional, unfiltered, never
+        compared to the principal. The class docstring claimed the provider was
+        "bound to one identity at construction, so nothing downstream can name
+        another account even by mistake", and it was bound only for auditing
+        and the role check. Token acquisition was bound to position (WS10
+        SEC-M-04).
+
+        Unreachable today: one session, one cache, one account. The failure
+        mode if it ever became reachable is not a wrong token — it is a Graph
+        call made as operator A while every audit record for it names operator
+        B, with the hash chain attesting to the wrong name. That is precisely
+        the failure this audit trail exists to make impossible, so the claim
+        is now enforced rather than described.
+
+        Matched on `home_account_id`, whose leading segment is the user's
+        object id — the same immutable `(oid, tid)` the principal is keyed on,
+        and never `username`, which is mutable and reassignable.
+        """
+        wanted = self._principal.oid
+        for account in self._app.get_accounts():
+            home = str(account.get("home_account_id", ""))
+            local = str(account.get("local_account_id", ""))
+            if home.split(".", 1)[0] == wanted or local == wanted:
+                return dict(account)
+
+        # Refuse rather than fall back to position. A provider that guesses is
+        # a provider that can be wrong silently, and this one is wired into
+        # every audited action.
         accounts = self._app.get_accounts()
-        return accounts[0] if accounts else None
+        if accounts:
+            log.warning(
+                "the token cache holds %d account(s), none matching the "
+                "signed-in operator; refusing rather than choosing",
+                len(accounts),
+            )
+        return None

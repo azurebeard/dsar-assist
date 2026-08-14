@@ -228,8 +228,13 @@ def _session_services(
     """One set of services per session.
 
     Per-session, not global: the read cache holds one operator's cases, and the
-    token provider is bound to one identity at construction — so nothing
-    downstream can name another account even by mistake.
+    token provider selects the cached account matching this principal's `oid`,
+    refusing when none matches rather than taking whichever is first.
+
+    That last clause used to say the provider was "bound to one identity at
+    construction". It was — for auditing and the role check, and not for token
+    acquisition, which took `accounts[0]` (WS10 SEC-M-04). The sentence is now
+    true of the thing it describes.
     """
     if session.case_service is not None:
         return session.case_service  # type: ignore[no-any-return]

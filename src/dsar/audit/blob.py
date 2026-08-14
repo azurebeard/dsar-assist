@@ -52,6 +52,12 @@ STORAGE_API_VERSION = "2021-12-02"
 #: arrive mid-append with no obvious cause.
 _MAX_BLOCKS = 50_000
 
+#: Pages of 5,000 blobs. One blob per UTC day means a single page covers 13.7
+#: years, so this is a runaway guard rather than a real bound — and it raises
+#: rather than truncating, because a short trail is indistinguishable from a
+#: deleted one.
+_MAX_LIST_PAGES = 20
+
 _TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
 
@@ -254,27 +260,52 @@ class AppendBlobSink:
                 client.close()
 
     def _list_blobs(self, client: httpx.Client) -> list[str]:
-        """Blob names in the container, via the list API.
+        """Every blob name in the container, following the continuation marker.
 
         Parsed with a string scan rather than an XML parser: the response is
         Azure's own, the elements are fixed, and `xml.etree` on a remote
         document is a parser this codebase would then have to reason about.
         The names are matched against the sink's own pattern, so anything
         unexpected in the container is ignored rather than interpreted.
+
+        The marker is followed rather than assumed absent (WS10 SEC-L-05).
+        Azure returns at most 5,000 blobs per page, and at one blob per UTC day
+        that is 13.7 years — past the retention period, so the truncation was
+        unreachable. It is fixed anyway: this module argues that hand-written
+        REST is safe *because the contract is written down*, and that argument
+        only holds where the contract is actually honoured. `read_all` is what
+        both `head()` and `dsar audit verify` consume, so a truncated listing
+        would yield a chain that appears to start mid-stream — evidence with a
+        beginning nobody can account for.
         """
-        response = client.get(
-            self.container_url,
-            params={"restype": "container", "comp": "list"},
-            headers=self._headers(),
-        )
-        if response.status_code != 200:
-            raise BlobSinkError(
-                f"listing the audit container returned {response.status_code}: "
-                f"{response.text[:300]}"
-            )
         names: list[str] = []
-        for chunk in response.text.split("<Name>")[1:]:
-            name = chunk.split("</Name>", 1)[0]
-            if name.startswith("audit-") and name.endswith(".jsonl"):
-                names.append(name)
-        return names
+        marker: str | None = None
+        for _ in range(_MAX_LIST_PAGES):
+            params = {"restype": "container", "comp": "list"}
+            if marker:
+                params["marker"] = marker
+            response = client.get(
+                self.container_url, params=params, headers=self._headers()
+            )
+            if response.status_code != 200:
+                raise BlobSinkError(
+                    f"listing the audit container returned {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+            body = response.text
+            for chunk in body.split("<Name>")[1:]:
+                name = chunk.split("</Name>", 1)[0]
+                if name.startswith("audit-") and name.endswith(".jsonl"):
+                    names.append(name)
+
+            marker = ""
+            if "<NextMarker>" in body:
+                marker = body.split("<NextMarker>", 1)[1].split("</NextMarker>", 1)[0]
+            if not marker:
+                return names
+
+        raise BlobSinkError(
+            f"the audit container listing did not terminate after "
+            f"{_MAX_LIST_PAGES} pages. Refusing rather than returning a partial "
+            f"trail, which would read as a chain that starts mid-stream."
+        )

@@ -239,3 +239,60 @@ def test_it_holds_the_same_shape_as_the_file_sink(sink: AppendBlobSink) -> None:
     for target in (sink, memory):
         _chain(target, 3)
     assert [r.hash for r in sink.read_all()] == [r.hash for r in memory.records]
+
+
+def test_the_listing_follows_the_continuation_marker() -> None:
+    """WS10 SEC-L-05. Azure returns at most 5,000 blobs per page.
+
+    Unreachable at one blob per UTC day — 13.7 years, past the retention — but
+    fixed anyway, because this module's argument is that hand-written REST is
+    safe *because the contract is written down*, and that only holds where the
+    contract is honoured. `read_all` feeds both `head()` and `dsar audit
+    verify`, so a truncated listing yields a chain that appears to start
+    mid-stream: evidence with a beginning nobody can account for.
+    """
+    pages = {
+        None: (
+            "<EnumerationResults><Blob><Name>audit-2026-08-01.jsonl</Name></Blob>"
+            "<NextMarker>page2</NextMarker></EnumerationResults>"
+        ),
+        "page2": (
+            "<EnumerationResults><Blob><Name>audit-2026-08-02.jsonl</Name></Blob>"
+            "<NextMarker></NextMarker></EnumerationResults>"
+        ),
+    }
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("comp") == "list":
+            marker = request.url.params.get("marker") or None
+            seen.append(marker)
+            return httpx.Response(200, text=pages[marker])
+        name = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, text="")
+
+    sink = AppendBlobSink(
+        CONTAINER, token=lambda: "t",
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert list(sink.read_all()) == []
+    assert seen == [None, "page2"], "the continuation marker was not followed"
+
+
+def test_a_listing_that_never_terminates_refuses_rather_than_truncating() -> None:
+    """A short trail is indistinguishable from a deleted one, so a runaway
+    listing raises instead of returning what it has."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("comp") == "list":
+            return httpx.Response(
+                200,
+                text="<EnumerationResults><NextMarker>always</NextMarker></EnumerationResults>",
+            )
+        return httpx.Response(200, text="")
+
+    sink = AppendBlobSink(
+        CONTAINER, token=lambda: "t",
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(BlobSinkError, match="did not terminate"):
+        list(sink.read_all())

@@ -95,6 +95,32 @@ def _set_cookie(
     )
 
 
+def _clear_cookie(response: Response, name: str, config: Config) -> None:
+    """Delete a cookie the browser will actually accept the deletion of.
+
+    Starlette's `delete_cookie` defaults to `secure=False`, and RFC 6265bis
+    §4.1.3.2 requires a user agent to **reject** a `__Host-`-prefixed cookie
+    that does not carry `Secure`. Hosted mode uses that prefix, so the plain
+    deletion was discarded by the browser and the cookie survived sign-out for
+    its full 8-hour `Max-Age` (WS10 SEC-M-05).
+
+    Impact was bounded — `sessions.remove()` destroys the server-side session,
+    so the retained value resolves to nothing and yields a 401 — but the stated
+    property was "logout clears the session cookie", and it did not.
+
+    Mirrors `_set_cookie` deliberately. The two must agree on `secure` and
+    `path` or the deletion silently fails to match the cookie it is deleting,
+    which is a failure with no error anywhere.
+    """
+    response.delete_cookie(
+        name,
+        path="/",
+        secure=config.mode.is_hosted,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 async def login(request: Request) -> Response:
     """Start the flow. Optionally carrying a claims challenge for a step-up."""
     state: AuthState = request.app.state.auth
@@ -237,7 +263,7 @@ async def callback(request: Request) -> Response:
     _set_cookie(
         response, state.session_cookie, session.id, config, max_age=8 * 60 * 60
     )
-    response.delete_cookie(state.flow_cookie, path="/")
+    _clear_cookie(response, state.flow_cookie, config)
     return response
 
 
@@ -273,7 +299,7 @@ async def logout(request: Request) -> Response:
     state.sessions.remove(request.cookies.get(state.session_cookie))
 
     response = RedirectResponse("/", status_code=302)
-    response.delete_cookie(state.session_cookie, path="/")
+    _clear_cookie(response, state.session_cookie, config)
     return response
 
 

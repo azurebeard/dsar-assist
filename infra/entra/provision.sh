@@ -177,6 +177,7 @@ PY
 
   ensure_sp "${app_id}" "${DESKTOP_NAME}"
   assert_no_credentials "${object_id}" "${DESKTOP_NAME}"
+  block_password_credentials "${object_id}" "${DESKTOP_NAME}"
 
   DESKTOP_APP_ID="${app_id}"
 }
@@ -218,7 +219,18 @@ print(json.dumps({
     "publicClient": {"redirectUris": []},
     "spa": {"redirectUris": []},
     "web": {
-        "redirectUris": ["${HOSTED_REDIRECT}", "${base}/auth/post-logout"],
+        # Only the callback. A post-logout URI used to sit here too and no
+        # such route exists (WS10 SEC-L-01) — a redirectUri is a place Entra
+        # will deliver an AUTHORIZATION CODE, so registering one for a 404
+        # adds a delivery point that serves nothing. A post-logout landing
+        # page belongs in postLogoutRedirectUris, and there is no page yet.
+        #
+        # Nothing shell-special in comments inside this heredoc. It is
+        # unquoted, so dollar-brace expands and a backtick is command
+        # substitution — including inside what looks like a Python comment.
+        # That has cost time three times in this repository, and once more
+        # while writing the warning about it.
+        "redirectUris": ["${HOSTED_REDIRECT}"],
         "logoutUrl": "${base}/auth/signed-out",
         "implicitGrantSettings": {
             "enableIdTokenIssuance": False,
@@ -236,6 +248,10 @@ PY
   info "redirect ${HOSTED_REDIRECT}"
 
   ensure_sp "${app_id}" "${HOSTED_NAME}"
+  # Asserted here too, not only on desktop. One FIC is expected — it is the
+  # whole of hosted mode's client authentication — and nothing else.
+  assert_no_credentials "${object_id}" "${HOSTED_NAME}" 1
+  block_password_credentials "${object_id}" "${HOSTED_NAME}"
 
   # No secret, no certificate. The client assertion is minted at runtime by a
   # user-assigned managed identity through a federated identity credential,
@@ -248,6 +264,70 @@ PY
 }
 
 # ------------------------------------------------------------------ helpers
+
+block_password_credentials() {
+  # An app management policy refusing passwordAddition. `add-fic.sh` told the
+  # operator one "should also be blocking passwordAddition — see provision.sh",
+  # and there was no policy anywhere in the repository or the tenant
+  # (WS10 SEC-M-01).
+  #
+  # This is what keeps the design's central claim true over time. The FIC being
+  # the only path to client authentication is why "who can run code as the
+  # UAMI" is the whole blast radius — and that stops being true the moment
+  # somebody adds a secret, which unlike the UAMI path is portable and usable
+  # from anywhere.
+  local object_id="$1" name="$2"
+  local policy_name="dsar-no-password-credentials"
+  local policy_id
+
+  policy_id="$(az rest --method GET \
+    --uri "https://graph.microsoft.com/v1.0/policies/appManagementPolicies" \
+    --query "value[?displayName=='${policy_name}'].id | [0]" -o tsv 2>/dev/null || true)"
+
+  if [ -z "${policy_id}" ] || [ "${policy_id}" = "None" ]; then
+    policy_id="$(az rest --method POST \
+      --uri "https://graph.microsoft.com/v1.0/policies/appManagementPolicies" \
+      --headers "Content-Type=application/json" \
+      --body "$(python3 - <<'PY'
+import json
+print(json.dumps({
+    "displayName": "dsar-no-password-credentials",
+    "description": "DSAR Assist holds no client secret. Desktop is a public client with PKCE; hosted authenticates with a federated credential minted by a managed identity.",
+    "isEnabled": True,
+    "restrictions": {
+        "passwordCredentials": [
+            {"restrictionType": "passwordAddition", "state": "enabled", "maxLifetime": None}
+        ]
+    },
+}))
+PY
+)" --query id -o tsv 2>/dev/null || true)"
+  fi
+
+  if [ -z "${policy_id}" ] || [ "${policy_id}" = "None" ]; then
+    info "could not create the app management policy — needs a role that can"
+    info "write policies. Create it by hand, or the no-secret claim is a"
+    info "convention rather than a control."
+    return 0
+  fi
+
+  az rest --method POST \
+    --uri "https://graph.microsoft.com/v1.0/applications/${object_id}/appManagementPolicies/\$ref" \
+    --headers "Content-Type=application/json" \
+    --body "{\"@odata.id\": \"https://graph.microsoft.com/v1.0/policies/appManagementPolicies/${policy_id}\"}" \
+    >/dev/null 2>&1 || true
+
+  local attached
+  attached="$(az rest --method GET \
+    --uri "https://graph.microsoft.com/v1.0/applications/${object_id}/appManagementPolicies" \
+    --query "length(value)" -o tsv 2>/dev/null || echo 0)"
+  if [ "${attached}" = "0" ]; then
+    info "app management policy NOT attached to ${name} — adding a secret is"
+    info "still possible. This is a control, not a nicety."
+  else
+    info "app management policy attached: passwordAddition blocked"
+  fi
+}
 
 ensure_sp() {
   local app_id="$1" name="$2"
@@ -272,7 +352,14 @@ ensure_sp() {
 }
 
 assert_no_credentials() {
-  local object_id="$1" name="$2"
+  # $3 is the number of federated credentials this registration is ALLOWED to
+  # hold: 0 for desktop, 1 for hosted, whose whole client authentication story
+  # is one FIC. Passwords and certificates must be zero on both, always.
+  #
+  # This ran on the desktop registration only (WS10 SEC-M-01), while the threat
+  # model claimed "both registrations hold zero credentials, asserted
+  # mechanically". The one it skipped is the internet-facing one.
+  local object_id="$1" name="$2" allowed_fic="${3:-0}"
   # Queried one at a time. A single array query returns newline-separated
   # values under `-o tsv`, which reads as "0\n0" and compares unequal to
   # anything sensible — the first version of this check failed on a
@@ -288,13 +375,18 @@ assert_no_credentials() {
   fic="$(az rest --method GET \
     --uri "https://graph.microsoft.com/v1.0/applications/${object_id}/federatedIdentityCredentials" \
     --query "length(value)" -o tsv)"
-  if [ "${passwords}" != "0" ] || [ "${keys}" != "0" ] || [ "${fic}" != "0" ]; then
-    die "${name} holds credentials (passwords: ${passwords}, keys: ${keys}, \
-federated: ${fic}). The desktop registration must hold none of any kind — that \
-is what makes 'this application cannot authenticate as itself' mechanically \
-checkable."
+  if [ "${passwords}" != "0" ] || [ "${keys}" != "0" ]; then
+    die "${name} holds a password or certificate credential (passwords: \
+${passwords}, keys: ${keys}). Neither registration may hold one: a secret is \
+portable and usable from anywhere, which is precisely what the federated \
+credential exists to avoid."
   fi
-  info "credentials: none (verified)"
+  if [ "${fic}" -gt "${allowed_fic}" ] 2>/dev/null; then
+    die "${name} holds ${fic} federated credential(s); at most ${allowed_fic} \
+is expected. An unexpected federation is another issuer trusted to \
+authenticate as this application."
+  fi
+  info "credentials: ${passwords} password, ${keys} certificate, ${fic} federated (expected <= ${allowed_fic})"
 }
 
 # ------------------------------------------------------------------ consent
