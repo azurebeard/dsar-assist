@@ -184,6 +184,20 @@ def flow_extras(config: Config) -> dict[str, Any]:
     a single operator re-selecting their account on every sign-in is friction
     with nothing to buy.
     """
+    #
+    # `response_mode` is deliberately left at Entra's default of `query`, and
+    # this is a decision rather than an omission (WS10 SEC-L-02). RFC 9700
+    # §4.3.1 prefers `form_post`, and MSAL warns about it on every call — but
+    # `form_post` makes the callback a cross-site POST, and both cookies are
+    # `SameSite=Lax`, which a browser does not send on one. Choosing it would
+    # trade a code in a URL for a sign-in that silently fails to find its own
+    # flow cookie.
+    #
+    # What makes `query` acceptable here, each checked rather than assumed:
+    # PKCE `S256` with the verifier held server-side and single-use, so an
+    # intercepted code is not redeemable; `Referrer-Policy: no-referrer` on
+    # every response; and request logging by route template only — the live
+    # instance logs `GET /auth/callback` with no query string.
     if config.mode.is_hosted:
         return {"prompt": "select_account"}
     return {}

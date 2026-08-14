@@ -57,7 +57,10 @@ FLOW_COOKIE = FLOW_COOKIE_HOSTED
 #: 256 bits. Guessing is not the threat, but there is no reason to be cheap.
 _ID_BYTES = 32
 
-#: Inside CA04's 4-hour sign-in frequency plus slack, so Conditional Access
+#: ⚠️ Written to sit inside CA04's 4-hour sign-in frequency plus slack — but
+#: NO policy in this tenant sets `signInFrequency` (WS10 SEC-M-02), so this
+#: value is not a backstop to Conditional Access. It IS the session lifetime.
+#: Originally: inside CA04's 4-hour sign-in frequency plus slack, so Conditional Access
 #: rather than this constant is what governs session lifetime.
 ABSOLUTE_TTL_SECONDS = 8 * 60 * 60
 IDLE_TTL_SECONDS = 60 * 60

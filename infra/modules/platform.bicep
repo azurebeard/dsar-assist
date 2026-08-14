@@ -16,10 +16,16 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   properties: {
     sku: { name: 'PerGB2018' }
     // The audit trail tees to stderr, which Container Apps ships here
-    // automatically. That is a second copy in a different trust domain, and
-    // the only defence against someone with the data-plane role truncating
-    // the blob — the hash chain makes truncation *detectable* only if a copy
-    // of a later head exists somewhere.
+    // automatically. That is the only defence against someone with the
+    // data-plane role truncating the blob — the hash chain makes truncation
+    // *detectable* only if a copy of a later head exists somewhere.
+    //
+    // ⚠️ It is NOT "a different trust domain", which an earlier version of this
+    // comment claimed (WS10 SEC-M-03). It is a different data plane in the
+    // same subscription and the same resource group: one management-plane
+    // actor can delete both. And 90 days against the trail's 2555 means the
+    // second copy expires first — raising it is a real cost decision, not a
+    // template default, so it is named here rather than quietly changed.
     retentionInDays: 90
     features: { enableLogAccessUsingOnlyResourcePermissions: true }
   }
@@ -134,6 +140,51 @@ resource auditRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     roleDefinitionId: storageBlobDataContributor
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// CanNotDelete on the two resources that hold the evidence. The immutability
+// policy is a DATA-plane control: it stops the blob being modified or deleted,
+// and does nothing about one management-plane `DELETE` of the account beneath
+// it (WS10 SEC-M-03). A lock is not a strong control — anyone who can remove
+// it can then delete — but it converts an accident, and a single mis-scoped
+// script, into a deliberate two-step act.
+resource storageLock 'Microsoft.Authorization/locks@2020-05-01' = {
+  scope: storage
+  name: 'dsar-audit-cannotdelete'
+  properties: {
+    level: 'CanNotDelete'
+    notes: 'Holds the DSAR audit trail under a time-based immutability policy. Deleting the account destroys evidence the policy exists to preserve.'
+  }
+}
+
+resource logsLock 'Microsoft.Authorization/locks@2020-05-01' = {
+  scope: logs
+  name: 'dsar-logs-cannotdelete'
+  properties: {
+    level: 'CanNotDelete'
+    notes: 'Holds the stderr copy of the audit trail and the sign-in join data.'
+  }
+}
+
+// Who read, wrote or deleted a blob — including the audit trail itself. Absent
+// until WS10 SEC-M-03: the trail recorded what operators did in the
+// application and nothing recorded access to the trail.
+//
+// ⚠️ This lands in the SAME workspace, which is in the same resource group and
+// under the same locks. It is better than nothing and it is not the
+// independent copy the threat model wants; a workspace in another subscription
+// is the honest version and is a decision rather than a template default.
+resource blobAudit 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  scope: blobService
+  name: 'dsar-blob-access'
+  properties: {
+    workspaceId: logs.id
+    logs: [
+      { category: 'StorageRead', enabled: true }
+      { category: 'StorageWrite', enabled: true }
+      { category: 'StorageDelete', enabled: true }
+    ]
   }
 }
 

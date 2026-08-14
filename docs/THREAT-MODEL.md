@@ -134,7 +134,11 @@ the trail becomes a cross-case index of who has been searched for. Directory
 > **Residual:** an attacker with write access to the file can delete the whole
 > trail. The chain makes truncation detectable only if a copy of a later head
 > exists — hence the stderr sink, which on Container Apps lands in Log
-> Analytics, a different trust domain. On the desktop there is no second copy.
+> Analytics — **a different data plane in the same subscription and the same
+> resource group**, not a different trust domain (WS10 SEC-M-03). One
+> management-plane actor can delete both. Its retention is 90 days against the
+> trail's 2555, so the second copy also expires first. On the desktop there is
+> no second copy at all.
 > **Accepted** for desktop; the append-blob sink with a WORM policy is B-03.
 
 ---
@@ -156,11 +160,38 @@ asserted mechanically. *Enforced.*
 
 ---
 
+## 5 · Who may attach the managed identity — hosted only
+
+**Added after WS10 SEC-M-06.** The design says the federated credential means
+"no secret to store, rotate or leak", and that is true. It also relocates the
+credential rather than removing it: **anyone who can run code as the
+user-assigned identity can mint the client assertion**, and that is a
+management-plane question the application cannot see or influence.
+
+The identity itself is minimal — verified: exactly one role assignment
+subscription-wide (Storage Blob Data Contributor at *container* scope), and the
+app registration holds **no application permissions**. So the assertion buys
+client authentication and nothing else; every Graph call still requires a
+signed-in operator's delegated token.
+
+The blast radius is therefore not the identity's permissions. It is the set of
+principals who can attach it to compute they control, and that set is
+**8+ Owner/Contributor principals including three standing `#EXT#` guest Owners
+at the tenant root**. The same principals can replace the container image on a
+process holding live operator sessions.
+
+**Not mitigated in this repository, and not mitigable here.** It is tenant
+governance: remove standing external Owners, or accept that the hosted trust
+boundary includes them. Stated so the FIC's security story is not read as
+stronger than it is.
+
+---
+
 ## Not mitigated, and said plainly
 
 | Threat | Why not | Compensating |
 |---|---|---|
-| **Token theft from process memory** | Sender-constrained tokens (DPoP, mTLS, Entra PoP) are unavailable — MSAL's public-client PoP needs a broker, and there is none in a Linux container. `doctor` asserts this rather than assuming it | In-memory only, never serialised; `cp1` so an admin revoke lands in minutes; phishing-resistant MFA so a stolen refresh token cannot be re-minted on a new device; short session |
+| **Token theft from process memory** | Sender-constrained tokens (DPoP, mTLS, Entra PoP) are unavailable — MSAL's public-client PoP needs a broker, and there is none in a Linux container. `doctor` asserts this rather than assuming it | **In-memory only, never serialised.** That is the whole of it today. ⚠️ Three controls previously listed here are **not configured in this tenant** (WS10 SEC-M-02): phishing-resistant MFA (policies grant plain `mfa`), sign-in frequency (**no policy sets it at all**, so the app's own 8h TTL *is* the session lifetime), and any Conditional Access scoped to these applications. `cp1` is declared and its negotiation is still unobserved (B-04). Named as absent rather than listed as present |
 | **A malicious operator** | They already hold the Purview permissions. The tool grants nothing they lack | The audit trail records what they did, and it is tamper-evident |
 | **A compromised operator endpoint** | Out of scope for an application control | Conditional Access device compliance (B-05), which is the decision still open |
 | **Under-disclosure from a bad query** | A correctness risk with compliance consequences, not a security one — but the sharper edge in practice. `kind:email` silently zeroes the site count | The query is shown and editable before anything runs; a narrowing applies to both queries by default, and both are scanned for mail-item clauses so a one-sided narrowing is named before the run; templates carry cautions and are marked *mailbox only*; B-02 was parked to build-time JSON so a template gets reviewed before it can shape a search |
