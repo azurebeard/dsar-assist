@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+
 import pytest
 from starlette.testclient import TestClient
 
 from dsar.config import load_config
-from dsar.web.app import build_app
+from dsar.web.app import STATIC_DIR, build_app
 from dsar.web.security import SECURITY_HEADERS
 
 
@@ -231,3 +234,89 @@ def test_polling_is_a_flat_interval_not_a_ladder(client: TestClient) -> None:
     # No back-off arithmetic left behind to drift from the constant.
     assert "pollDelay" not in script
     assert "* 3" not in script
+
+
+def test_a_narrowing_can_reach_both_queries(client: TestClient) -> None:
+    """The delta is only the expansion's contribution while the two queries
+    differ by the expansion and nothing else.
+
+    Applying to the expanded side alone was the only option there was, and it
+    produced the measured inversion on DSAR-2026-0418a: naive 40 items and one
+    site, expanded 4 and none, because `kind:email` is a mail-item property.
+    Both queries is now the first button; one side is still available, because
+    narrowing one side is a legitimate thing to want.
+    """
+    script = client.get("/app.js").text
+    assert 'applyTemplate(template, readValues(), ["naive", "expanded"])' in script
+    assert 'applyTemplate(template, readValues(), ["expanded"])' in script
+    assert '"Apply to both queries"' in script
+
+
+def test_the_delta_says_when_it_has_stopped_meaning_what_it_looks_like(
+    client: TestClient,
+) -> None:
+    """A number that reads backwards is worse than no number, because it is
+    believable. The interface cannot refuse a one-sided narrowing — it is
+    sometimes what the operator wants — so it states what the delta measures.
+
+    Asserted on the tracked state rather than on the wording: the sentence will
+    improve, the property that a divergence is detected and reset clears it
+    should not.
+    """
+    script = client.get("/app.js").text
+    assert "state.narrowings" in script
+    assert "function renderComparability()" in script
+    # Every path that changes what is in a query box re-evaluates it: applying,
+    # a partial failure part-way through applying, resetting, and a fresh
+    # expansion. A stale warning is as misleading as a missing one.
+    assert script.count("renderComparability()") >= 6
+    reset = script.split('$("reset-queries").addEventListener', 1)[1].split("});", 1)[0]
+    assert "state.narrowings = { naive: [], expanded: [] }" in reset
+
+
+def test_a_mailbox_only_narrowing_explains_its_own_zero(client: TestClient) -> None:
+    """`kind:`, `filetype:` and `hasattachment:` drop the site count to zero.
+    Unexplained, that reads as an estate with no SharePoint in it — a
+    conclusion a DSAR response cannot afford, and one the caution inside a
+    collapsed panel did not prevent."""
+    script = client.get("/app.js").text
+    assert "template.mailbox_only" in script  # marked on the card, before the click
+    assert "not an empty estate" in script    # explained in the banner, after it
+
+
+def test_a_pasted_query_is_checked_as_well_as_a_clicked_one(
+    client: TestClient,
+) -> None:
+    """The measured inversion came from a query built in the Purview query
+    builder and pasted in. Tracking which templates were clicked is blind to
+    that, so the text is scanned too — and both boxes re-check on input.
+
+    Quoted phrases are blanked before the scan: a warning that fires on the
+    phrase "kind: regards" is one an operator learns to dismiss, and then it is
+    not there for the clause that matters.
+    """
+    script = client.get("/app.js").text
+    assert "MAIL_ITEM_CLAUSE" in script
+    assert "kind|filetype|hasattachment" in script
+    assert 'replace(/"[^"]*"/g' in script
+    assert 'addEventListener("input", renderComparability)' in script
+
+
+def test_the_front_end_parses() -> None:
+    """No bundler means no compile step, which is the right trade and leaves
+    exactly one hole: a syntax error is served as happily as working code, and
+    every server-side test still passes because they read the file as text.
+
+    Skipped without node rather than routed around — CI runs it on all three
+    operating systems unconditionally, so a skip here costs local feedback and
+    not the guarantee.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; CI runs this unconditionally")
+    result = subprocess.run(
+        [node, "--check", str(STATIC_DIR / "app.js")],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

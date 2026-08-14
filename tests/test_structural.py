@@ -760,3 +760,36 @@ def test_the_launcher_does_not_treat_docker_as_available_by_default() -> None:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
         assert "docker image inspect" in text, f"{name} does not check for the image"
         assert "docker pull" in text, f"{name} does not try to pull it"
+
+
+def test_the_front_end_never_assigns_html() -> None:
+    """`app.js` opens by declaring "textContent, never innerHTML" as a rule of
+    its own. Until now nothing enforced it.
+
+    That is precisely the shape of SEC-H-02, where a comment claimed a
+    guarantee the code did not provide and survived two readings and a passed
+    review. The values rendered here are a data subject's name, their aliases
+    and the free-text terms an operator typed — the CSP blocks a remote script
+    but not markup injected into the page from a directory lookup.
+
+    Literals assembled at runtime so the scanner does not match itself. Same
+    trick as the rest of this module, and for the same reason.
+    """
+    from dsar.web.app import STATIC_DIR
+
+    forbidden = (
+        "inner" + "HTML",
+        "outer" + "HTML",
+        "insertAdjacent" + "HTML",
+        "document." + "write",
+    )
+    offenders: list[str] = []
+    for path in sorted(STATIC_DIR.glob("*.js")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("//"):
+                continue  # the rule is allowed to name what it forbids
+            offenders += [
+                f"{path.name}:{number} {word}" for word in forbidden if word in line
+            ]
+    assert offenders == []

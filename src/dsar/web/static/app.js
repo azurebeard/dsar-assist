@@ -24,6 +24,10 @@
     pollTimer: null, pollStarted: null, generated: null,
     tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
     nextPollAt: null,
+    //: Which narrowings have been applied to each query, by template id. The
+    //: delta is only the expansion's contribution while these two agree; see
+    //: renderComparability().
+    narrowings: { naive: [], expanded: [] },
   };
 
   //: How long between automatic checks. See schedulePoll() for why it is flat.
@@ -318,6 +322,8 @@
     // stack by design, but a stacked query is easy to get wrong by hand and
     // impossible to un-stack without this.
     state.generated = { naive: data.naive_kql || "", expanded: data.kql || "" };
+    state.narrowings = { naive: [], expanded: [] };
+    renderComparability();
     show("expansion");
   }
 
@@ -326,7 +332,93 @@
     if (!state.generated) return;
     $("kql-naive").value = state.generated.naive;
     $("kql-expanded").value = state.generated.expanded;
+    state.narrowings = { naive: [], expanded: [] };
+    renderComparability();
+    status("Back to the generated queries.", false);
   });
+
+  // ------------------------------------------------- delta comparability
+
+  //: Templates by id, kept so the warning can name them and read `mailbox_only`.
+  const templatesById = new Map();
+
+  //: Mail-item properties. Measured 2026-08-02 and again on DSAR-2026-0418a:
+  //: any of these reduces the site count to zero, including on a query that
+  //: touches three sites. They are not "email filters" — they silently exclude
+  //: SharePoint and OneDrive from the count.
+  const MAIL_ITEM_CLAUSE = /\b(?:kind|filetype|hasattachment)\s*:/i;
+
+  const SIDE = { naive: "naive", expanded: "expanded" };
+
+  // The demonstration is the *difference* between two searches. That difference
+  // is the identity expansion only while the queries are otherwise identical —
+  // so a narrowing on one side turns the delta into a measurement of the
+  // narrowing. Measured with `kind:email` on the expanded side alone: naive 40
+  // items and one site, expanded 4 and none. The expanded query was the
+  // narrower one and the delta read backwards.
+  //
+  // Two signals, because they catch different mistakes. The applied-template
+  // list catches a click. Scanning the text catches a query pasted in from the
+  // Purview query builder, which is how this was actually hit and which the
+  // click tracking is blind to.
+  //
+  // Neither refuses anything. Narrowing one side is a legitimate thing to want;
+  // what the operator cannot do is find out afterwards that the number meant
+  // something else.
+  function renderComparability() {
+    const lines = [];
+
+    const naive = state.narrowings.naive;
+    const expanded = state.narrowings.expanded;
+    const lopsided = expanded.filter((id) => naive.indexOf(id) === -1)
+      .concat(naive.filter((id) => expanded.indexOf(id) === -1));
+    if (lopsided.length) {
+      lines.push(
+        lopsided.map(nameOf).join(", ") +
+        (lopsided.length === 1 ? " is" : " are") +
+        " on one query and not the other, so the delta measures that narrowing " +
+        "rather than the expansion \u2014 and can come out negative. Apply it to " +
+        "both queries, or reset.");
+    }
+
+    const inNaive = hasMailItemClause($("kql-naive").value);
+    const inExpanded = hasMailItemClause($("kql-expanded").value);
+    if (inNaive !== inExpanded) {
+      const side = inExpanded ? SIDE.expanded : SIDE.naive;
+      lines.push(
+        "Only the " + side + " query carries a mail-item clause " +
+        "(kind:, filetype:, hasattachment:). That side counts mailbox content " +
+        "and reports zero sites, so the two searches are not measuring the " +
+        "same estate and the delta can read backwards.");
+    } else if (inNaive) {
+      lines.push(
+        "Both queries carry a mail-item clause, so both site counts will read " +
+        "zero. That is the clause working, not an empty estate \u2014 the delta " +
+        "is still the expansion, within mailboxes.");
+    }
+
+    if (!lines.length) return hide("comparability");
+    setText("comparability", lines.join(" "));
+    show("comparability");
+  }
+
+  // Quoted phrases are blanked first. "kind: regards" in an employment
+  // vocabulary is a phrase, not a property clause, and a warning that fires on
+  // one is a warning people learn to close.
+  function hasMailItemClause(query) {
+    return MAIL_ITEM_CLAUSE.test((query || "").replace(/"[^"]*"/g, '""'));
+  }
+
+  function nameOf(id) {
+    const template = templatesById.get(id);
+    return "\u201c" + ((template && template.name) || id) + "\u201d";
+  }
+
+  // A pasted query is the case the click tracking cannot see, so the check has
+  // to run on what is in the box rather than on what put it there.
+  for (const id of ["kql-naive", "kql-expanded"]) {
+    $(id).addEventListener("input", renderComparability);
+  }
 
   // -------------------------------------------------------- templates
 
@@ -336,7 +428,9 @@
       if (status !== 200) return;
       const box = $("templates");
       box.replaceChildren();
+      templatesById.clear();
       for (const template of payload.templates || []) {
+        templatesById.set(template.id, template);
         box.appendChild(renderTemplate(template));
       }
     } catch (err) { /* handled */ }
@@ -344,7 +438,10 @@
 
   function renderTemplate(template) {
     const wrap = el("div", undefined, "template");
-    wrap.appendChild(el("h4", template.name));
+    // The caution below says this at length, inside a panel the operator has
+    // usually already collapsed. This is the version that gets read.
+    wrap.appendChild(el("h4", template.name +
+      (template.mailbox_only ? "  \u00b7  mailbox only" : "")));
     wrap.appendChild(el("p", template.purpose, "muted small"));
     if (template.guidance) wrap.appendChild(el("p", template.guidance, "muted small"));
     if (template.caution) wrap.appendChild(el("p", template.caution, "warn small"));
@@ -372,37 +469,80 @@
       fields[input.name] = field;
     }
 
-    const apply = el("button", "Apply to expanded query", "button secondary small");
-    apply.type = "button";
-    apply.addEventListener("click", async () => {
+    const readValues = () => {
       const values = {};
       for (const [name, field] of Object.entries(fields)) values[name] = field.value;
-      try {
-        status("Applying \u201c" + template.name + "\u201d\u2026", true);
+      return values;
+    };
+
+    // Both queries by default. Narrowing one side alone is a legitimate thing
+    // to want — the workload split is most informative on the expanded query —
+    // but it is the exception, so it is the second button rather than the only
+    // one. Until this existed, it was the only one.
+    const both = el("button", "Apply to both queries", "button secondary small");
+    both.type = "button";
+    both.addEventListener("click", () => {
+      applyTemplate(template, readValues(), ["naive", "expanded"]);
+    });
+    wrap.appendChild(both);
+
+    const only = el("button", "Expanded only", "button subtle small");
+    only.type = "button";
+    only.addEventListener("click", () => {
+      applyTemplate(template, readValues(), ["expanded"]);
+    });
+    wrap.appendChild(only);
+    return wrap;
+  }
+
+  const BOX = { naive: "kql-naive", expanded: "kql-expanded" };
+
+  async function applyTemplate(template, values, targets) {
+    clearError();
+    // Applying the same narrowing twice yields
+    //   (... AND kind:email) AND kind:email
+    // which is valid KQL, redundant, and unreadable — and for the date
+    // template two ranges can contradict each other outright. A repeat is
+    // almost always a double click, so it is refused rather than stacked.
+    // Tracked by template id rather than by matching the appended text: with
+    // two target boxes that string arithmetic gained a second way to be wrong.
+    const pending = targets.filter(
+      (t) => state.narrowings[t].indexOf(template.id) === -1);
+    if (!pending.length) {
+      return fail(null,
+        "That narrowing is already on the " + targets.join(" and ") +
+        " query. Use Reset to start from the generated one, or edit the text " +
+        "directly.");
+    }
+
+    try {
+      status("Applying \u201c" + template.name + "\u201d\u2026", true);
+      // One box at a time, and the failure message names how far it got. A
+      // partial application reported as a plain failure is exactly how the two
+      // queries diverge without anyone knowing they have.
+      const applied = [];
+      for (const target of pending) {
         const { status: code, payload } = await api("/api/template/apply", {
-          query: $("kql-expanded").value,
+          query: $(BOX[target]).value,
           template_id: template.id,
           values,
         });
-        if (code !== 200) return fail(payload, "The template could not be applied.");
-        // Applying the same narrowing twice yields
-        //   (... AND kind:email) AND kind:email
-        // which is valid KQL, redundant, and unreadable — and for the date
-        // template two ranges can contradict each other outright. A repeat is
-        // almost always a double click, so it is refused rather than stacked.
-        const current = $("kql-expanded").value;
-        const added = payload.query.slice(current.length).trim();
-        if (added && current.indexOf(added.replace(/^AND\s+/, "")) !== -1) {
-          return fail(null,
-            "That narrowing is already in the query. Use Reset to start from the " +
-            "generated one, or edit the text directly.");
+        if (code !== 200) {
+          renderComparability();
+          return fail(payload, applied.length
+            ? "Applied to the " + applied.join(" and ") +
+              " query, then failed on the rest."
+            : "The template could not be applied.");
         }
-        $("kql-expanded").value = payload.query;
-        status("Applied \u201c" + template.name + "\u201d to the expanded query.", false);
-      } catch (err) { /* handled */ }
-    });
-    wrap.appendChild(apply);
-    return wrap;
+        $(BOX[target]).value = payload.query;
+        state.narrowings[target].push(template.id);
+        applied.push(target);
+      }
+      renderComparability();
+      status("Applied \u201c" + template.name + "\u201d to the " +
+             applied.join(" and ") + " quer" +
+             (applied.length > 1 ? "ies" : "y") + ".", false);
+    } catch (err) { renderComparability(); }
   }
 
   // ---------------------------------------------------------- search

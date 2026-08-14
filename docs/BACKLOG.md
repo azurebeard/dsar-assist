@@ -227,6 +227,28 @@ stopped being true.
 
 ---
 
+## B-10 · Comparability warning — the two residuals
+
+**Size:** small · **Raised by:** `WS10-review-comparability-2026-08-14`
+
+The banner that says when the delta has stopped meaning what it looks like is
+**advice, not a control** — it never refuses a run. Deliberate: narrowing one
+side is a legitimate thing to want, and a tool that refuses it teaches the
+operator to route around it. But an operator who ignores it can still start two
+searches that are not comparable.
+
+And the mail-item list is **a list, not a parser**. `kind:`, `filetype:` and
+`hasattachment:` are the three measured on 2026-08-02. A fourth would not be
+detected, and this tool does not parse KQL. A false negative leaves the
+operator exactly where they were before the warning existed, so there is no
+state in which it makes things worse — but it is not the guarantee the banner's
+confident tone might suggest.
+
+Revisit if a fourth mail-item property is measured, or if the delta is ever
+presented anywhere the queries are not visible beside it.
+
+---
+
 ## B-08 · Distroless evaluation
 
 **Size:** half a day
@@ -250,6 +272,18 @@ covered.
 
 ## Closed
 
+- **The delta reading backwards** — a narrowing applied to one query and not
+  the other measured the narrowing rather than the expansion. Measured on
+  DSAR-2026-0418a: naive 40 items and one site, expanded 4 and none. Closed two
+  ways, because they catch different mistakes: a narrowing now applies to both
+  queries by default, and the text of both boxes is scanned for a mail-item
+  clause — which is what catches a query pasted in from the Purview query
+  builder, the path the click tracking is blind to and the one that actually
+  happened
+- **`innerHTML` was a rule in a comment with nothing enforcing it** — the same
+  shape as SEC-H-02. Now a structural test, proven by tampering
+- **No request body cap anywhere in the stack** — found while fact-checking a
+  sentence in the review that claimed one existed
 - Portability — one image plus a `uv` path, verified on three operating systems
 - The empty queue — Graph is the source of truth, nothing to copy between machines
 - Identity plane — both open questions answered live; `roles` is emitted to a

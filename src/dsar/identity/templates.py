@@ -98,6 +98,11 @@ class QueryTemplate:
     guidance: str = ""
     caution: str = ""
     verified: str = ""
+    #: Measured to reduce the site count to zero — the clause is a mail-item
+    #: property, so it silently excludes SharePoint and OneDrive. Carried as a
+    #: field rather than left to the prose in `caution` because the interface
+    #: has to act on it, and a caution inside a collapsed panel is not a control.
+    mailbox_only: bool = False
 
 
 # ---------------------------------------------------------------- loading
@@ -155,6 +160,7 @@ def _parse_template(entry: Any) -> QueryTemplate:
         guidance=str(entry.get("guidance") or ""),
         caution=str(entry.get("caution") or ""),
         verified=str(entry.get("verified") or ""),
+        mailbox_only=bool(entry.get("mailbox_only", False)),
     )
 
 

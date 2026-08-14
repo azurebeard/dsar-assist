@@ -60,15 +60,19 @@ estimate and export are recorded with actor `oid`, the token's `uti`, and a
 hash chain. Refusals are recorded too — a trail holding only successes
 describes a system where nobody is ever turned away. *Enforced.*
 
-**Information disclosure.** `textContent` throughout, never `innerHTML` on
-dynamic values. CSP `default-src 'none'`, no `unsafe-inline`. `/healthz`
+**Information disclosure.** `textContent` throughout, never `innerHTML` — a
+rule the front end had stated in a comment and nothing enforced until a
+structural test was added and proven by tampering. CSP `default-src 'none'`, no `unsafe-inline`. `/healthz`
 discloses no tenant, and withholds the version when hosted. A 500 returns a
 21-byte body — no traceback, no exception type, no path (verified). *Enforced.*
 
 **Denial of service.** `/auth/login` is unauthenticated and allocates server
 state: rate-limited 10/min, and the pending-flow store now **refuses** rather
 than evicting, so one caller cannot cancel another's in-progress sign-in
-(OWASP A04-02). API limited 120/min per operator. *Enforced.*
+(OWASP A04-02). API limited 120/min per operator, and a request body capped at
+64 KiB — rate limiting bounds how many requests arrive, not how large one is,
+and nothing else in the stack capped it. The body is read *after* the session
+check, so an anonymous POST is refused without being buffered. *Enforced.*
 
 **Elevation of privilege.** Write actions check the app role **server-side** —
 a button that is not rendered is not a control, the endpoint is still there.
@@ -159,7 +163,7 @@ asserted mechanically. *Enforced.*
 | **Token theft from process memory** | Sender-constrained tokens (DPoP, mTLS, Entra PoP) are unavailable — MSAL's public-client PoP needs a broker, and there is none in a Linux container. `doctor` asserts this rather than assuming it | In-memory only, never serialised; `cp1` so an admin revoke lands in minutes; phishing-resistant MFA so a stolen refresh token cannot be re-minted on a new device; short session |
 | **A malicious operator** | They already hold the Purview permissions. The tool grants nothing they lack | The audit trail records what they did, and it is tamper-evident |
 | **A compromised operator endpoint** | Out of scope for an application control | Conditional Access device compliance (B-05), which is the decision still open |
-| **Under-disclosure from a bad query** | A correctness risk with compliance consequences, not a security one — but the sharper edge in practice. `kind:email` silently zeroes the site count | The query is shown and editable before anything runs; templates carry cautions; B-02 was parked to build-time JSON so a template gets reviewed before it can shape a search |
+| **Under-disclosure from a bad query** | A correctness risk with compliance consequences, not a security one — but the sharper edge in practice. `kind:email` silently zeroes the site count | The query is shown and editable before anything runs; a narrowing applies to both queries by default, and both are scanned for mail-item clauses so a one-sided narrowing is named before the run; templates carry cautions and are marked *mailbox only*; B-02 was parked to build-time JSON so a template gets reviewed before it can shape a search |
 | **Purview RBAC being wrong** | Not ours to fix | Stated, not hidden |
 
 ---
@@ -180,5 +184,5 @@ Each of these would invalidate a claim above and needs a fresh review:
 ## Reviews
 
 `WS10-review-2026-08-14.md` (Phase 0) · `WS10-review-phases1-4-2026-08-14.md` ·
-`OWASP-top10-2026-08-14.md`. Every finding across all three is closed; the open
+`OWASP-top10-2026-08-14.md` · `WS10-review-comparability-2026-08-14.md`. Every finding across all three is closed; the open
 items are in `BACKLOG.md`.

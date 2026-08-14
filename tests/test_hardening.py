@@ -286,3 +286,61 @@ def test_the_poll_floor_covers_the_endpoint_the_ui_actually_polls() -> None:
     from dsar.web.app import _POLLED_ENDPOINTS
 
     assert "/api/case" in _POLLED_ENDPOINTS
+
+
+# ------------------------------------------ A04 request body size
+
+
+def _request_carrying(payload: bytes, chunk_size: int = 4096):
+    """A real Starlette Request over a body delivered in chunks.
+
+    Chunked on purpose: a single-shot body would let a Content-Length check
+    pass for the wrong reason, and Content-Length is exactly what this must not
+    depend on.
+    """
+    from starlette.requests import Request
+
+    chunks = [payload[i : i + chunk_size] for i in range(0, len(payload), chunk_size)]
+    remaining = iter(chunks)
+
+    async def receive() -> dict:
+        try:
+            return {"type": "http.request", "body": next(remaining), "more_body": True}
+        except StopIteration:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request(
+        {"type": "http", "method": "POST", "path": "/api/expand", "headers": []},
+        receive,
+    )
+
+
+def test_a_request_body_is_capped() -> None:
+    """Nothing else in the stack caps it. uvicorn imposes no body limit and
+    `request.json()` buffers whatever arrives, so before this the ceiling on one
+    authenticated POST was the operator's available memory.
+
+    Rate limiting bounds how many requests arrive, not how large one is.
+    """
+    import asyncio
+
+    from dsar.web.app import MAX_BODY_BYTES, _read_capped_body
+
+    ok = b'{"reference":"' + b"x" * (MAX_BODY_BYTES // 2) + b'"}'
+    assert asyncio.run(_read_capped_body(_request_carrying(ok))) == ok
+
+    too_big = b"x" * (MAX_BODY_BYTES + 1)
+    assert asyncio.run(_read_capped_body(_request_carrying(too_big))) is None
+
+
+def test_the_cap_is_not_reachable_before_authentication() -> None:
+    """The read happens after the session check, so an anonymous POST is
+    refused without its body ever being buffered — the cap protects an
+    authenticated operator from themselves and from a hostile tab, not the
+    front door."""
+    import inspect
+
+    from dsar.web import app as web_app
+
+    source = inspect.getsource(web_app.api)
+    assert source.index("not_signed_in") < source.index("_read_capped_body")

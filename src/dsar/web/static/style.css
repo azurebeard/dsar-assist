@@ -177,6 +177,14 @@ textarea { resize: vertical; }
 .templates { display: grid; gap: 1rem; margin-top: 0.75rem; }
 .template { padding: 0.85rem 1rem; border: 1px solid var(--line); border-radius: 6px; }
 .template h4 { margin: 0 0 0.3rem; font-size: 0.95rem; }
+.template .button + .button { margin-left: 0.5rem; }
+
+/* The one-sided apply is the exception, so it is the quieter control. Both
+   queries is what keeps the delta meaning the expansion. */
+.button.subtle {
+  background: transparent; color: var(--muted); border-color: transparent;
+  text-decoration: underline;
+}
 
 details summary { cursor: pointer; margin: 1rem 0 0.5rem; color: var(--muted); }
 

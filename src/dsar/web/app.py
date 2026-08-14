@@ -16,6 +16,7 @@ Both are testable. Neither is this line.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -144,9 +145,15 @@ async def api(request: Request) -> Response:
     if wait is not None:
         return _too_many(wait)
 
+    raw = await _read_capped_body(request)
+    if raw is None:
+        return JSONResponse(
+            {"error": "body_too_large", "message": "Request body is too large."},
+            status_code=413,
+        )
     try:
-        body = await request.json()
-    except Exception:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
         body = {}
     if not isinstance(body, dict):
         body = {}
@@ -175,6 +182,35 @@ async def api(request: Request) -> Response:
         workflow=workflow,
     )
     return JSONResponse(payload, status_code=status)
+
+
+#: The largest legitimate body is an expand call carrying a name, a handful of
+#: aliases and a free-text term list, or a query the operator has edited — a
+#: few kilobytes at the outside. 64 KiB is generous headroom.
+#:
+#: It exists because nothing else in the stack caps it: uvicorn imposes no
+#: body limit, Starlette's `request.json()` buffers whatever arrives, and every
+#: API call here is authenticated — so the ceiling was one signed-in operator's
+#: available memory. Rate limiting bounds the number of requests, not the size
+#: of one.
+MAX_BODY_BYTES = 64 * 1024
+
+
+async def _read_capped_body(request: Request) -> bytes | None:
+    """Read the body, or `None` if it exceeds the cap.
+
+    Measured while streaming rather than read from `Content-Length`: a chunked
+    request does not send one, and a request that does send one can be lying —
+    which is the whole reason to count rather than ask.
+    """
+    size = 0
+    chunks: list[bytes] = []
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _too_many(seconds: float) -> Response:

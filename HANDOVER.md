@@ -14,7 +14,7 @@ assumed rather than verified, it says so.
 | Working copy | `/media/ben/data/projects/1b1d65d1/dsar-assist` |
 | Remote | **github.com/azurebeard/dsar-assist** (private), CI green |
 | Predecessor | `/media/ben/data/projects/8652e638/` — **read-only reference**, do not modify |
-| Status | **Phases 0–4 built and working end to end. Demo next week.** |
+| Status | **Phases 0–4 built and working end to end. Demo next week, blocker cleared.** |
 
 A control plane for Purview eDiscovery DSAR cases. **No data plane** — it never
 requests the resource carrying the download permission, no download or preview
@@ -83,9 +83,9 @@ uid 10001, read-only root, no pip, zero fixable High/Critical.
 
 ---
 
-## 4 · The demo — one blocker
+## 4 · The demo
 
-**The expanded query has `AND kind:email` on it.** Measured on `DSAR-2026-0418a`:
+**The blocker is fixed** (2026-08-14). It was this, measured on `DSAR-2026-0418a`:
 
 ```
              items   mailboxes   sites
@@ -93,10 +93,23 @@ naive           40          12       1
 expanded         4           3       0
 ```
 
-`kind:` is a mail-item property and it **zeroes the site count**. The expanded
-query is narrower than the naive one, so the delta reads backwards. Hit
-**Reset to generated queries** and do not apply the `workload` narrowing to the
-query being compared.
+`AND kind:email` was on the expanded query only. `kind:` is a mail-item
+property, it **zeroes the site count**, and the expanded query was therefore
+the narrower of the two — so the delta read backwards.
+
+The tool now says so, two ways, because they catch different mistakes:
+
+* A narrowing applies to **both queries** by default. *Expanded only* is still
+  there, quieter, because narrowing one side is a legitimate thing to want.
+* The **text of both boxes is scanned** for `kind:`, `filetype:` and
+  `hasattachment:` on every keystroke. This is the one that matters — your
+  query came from the Purview query builder and was pasted in, which the click
+  tracking cannot see.
+
+Either way a warning appears above the run button naming what the delta will
+actually measure. Nothing is refused; the queries stay visible and editable.
+
+If you see the banner on stage, hit **Reset to generated queries**.
 
 ### Subject to use — Megan Bowen
 

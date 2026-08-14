@@ -170,6 +170,10 @@ def _templates(ctx: Context) -> ApiResult:
                 "purpose": t.purpose,
                 "guidance": t.guidance,
                 "caution": t.caution,
+                # The interface acts on this: a narrowing that zeroes the site
+                # count has to be visible where it is applied, not only in a
+                # caution inside a panel the operator has already collapsed.
+                "mailbox_only": t.mailbox_only,
                 "inputs": [
                     {
                         "name": i.name,

@@ -130,6 +130,8 @@
         <textarea id="kql-expanded" rows="6" spellcheck="false"></textarea>
       </div>
 
+      <p id="comparability" class="warn small" hidden></p>
+
       <p>
         <button id="reset-queries" class="button secondary small" type="button">
           Reset to generated queries
@@ -141,6 +143,12 @@
         <p class="muted small">
           Each narrowing stacks onto the query above with AND, wrapped in
           parentheses so it cannot change what the query already meant.
+        </p>
+        <p class="muted small">
+          Apply to <strong>both</strong> queries unless you mean otherwise. The
+          delta is only the expansion&rsquo;s contribution while the two queries
+          differ by the expansion and nothing else — a narrowing on one side
+          alone measures the narrowing instead, and can read backwards.
         </p>
         <div id="templates" class="templates"></div>
       </details>

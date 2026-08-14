@@ -70,6 +70,20 @@ jobs:
           DSAR_TENANT_ID: 00000000-0000-0000-0000-000000000002
         run: uv run dsar doctor --offline
 
+      # The front end has no build step, which is deliberate — and it means a
+      # syntax error there is served as happily as working code, passes every
+      # test in the suite, and fails only in the browser with the page half
+      # rendered. Node is preinstalled on every hosted runner and used for
+      # nothing else here; this is the parser, not a toolchain.
+      #
+      # Deliberately duplicates test_the_front_end_parses, which skips when
+      # node is absent. This step is what stops the guarantee being a skip
+      # nobody reads. A duplicated assertion is how CI went red for four
+      # commits unnoticed once, so: same command, no second copy of any logic.
+      - name: Front end parses
+        shell: bash
+        run: node --check src/dsar/web/static/app.js
+
   typecheck:
     name: mypy --strict
     needs: structural
