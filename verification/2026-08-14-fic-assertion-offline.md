@@ -48,6 +48,20 @@ Two details worth keeping:
 - **No `client_secret` appears in the request body.** The assertion is the only
   client credential sent.
 
+## Correction, 2026-08-14 (later the same day)
+
+The framing below — and in `DESIGN.md` — called this the design's **largest
+technical unknown**, on the grounds that no Microsoft sample does
+FIC-by-managed-identity with an authorization code.
+
+That observation is true and it is not the same claim. Microsoft's own
+documentation states that *"client assertions can be used anywhere a client
+secret would be used. For example, in the authorization code flow"* — naming
+this exact grant. See `2026-08-14-fic-best-practice.md`.
+
+**Risk downgraded to "unproven in this tenant".** Still worth probing, still
+not a design question.
+
 ## Still unknown — B
 
 Whether Entra accepts an assertion minted by a managed identity for this grant.
