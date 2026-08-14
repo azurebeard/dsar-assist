@@ -242,6 +242,18 @@ jobs:
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
+    # On a pull_request event the action asks the API which commits the PR
+    # contains, to work out the range to scan. The workflow default is
+    # `contents: read` and nothing else, so that call was refused with
+    # "Resource not accessible by integration" and took the job with it — on
+    # every pull request, which so far has meant every Dependabot bump.
+    #
+    # Read, never write. This job checks out and runs against pull request
+    # content; a token that could write to the pull request is a token that
+    # content can reach.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -254,15 +266,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
-          # The action posts a PR comment summarising what it found. On a
-          # Dependabot pull request the GITHUB_TOKEN is read-only, so that
-          # write fails with "Resource not accessible by integration" and the
-          # whole job goes red — on every dependency bump, for a reason that
-          # has nothing to do with the bump.
-          #
-          # That is worse than noise. A bump that genuinely breaks something
-          # looks identical to one that does not, so the signal the scan exists
-          # to provide is gone. The scan itself still runs and still fails the
-          # job on a real finding; only the comment is dropped, and the finding
-          # is in the log either way.
+          # Off, because posting one needs `pull-requests: write` on a job that
+          # runs pull request content. The finding is in the log and the job
+          # still fails on it; a comment is a convenience, not the control.
           GITLEAKS_ENABLE_COMMENTS: "false"
