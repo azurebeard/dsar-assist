@@ -161,9 +161,19 @@ security reviews.
 | `infra/entra/add-fic.sh` | ✅ idempotent, warns about the case-sensitive subject |
 | `dsar doctor` hosted checks | ✅ assertion aud/iss/sub, and the `invalid_client` vs `invalid_grant` probe |
 | B-06 session eviction | ✅ see below |
-| **The live FIC exchange** | ✗ **needs a deployment** |
+| **The live FIC exchange** | ✅ **proven 2026-08-14** — `invalid_grant`, see `verification/2026-08-14-fic-exchange-live.md` |
 
-### What is still unknown
+### Answered 2026-08-14 — it works
+
+Deployed to `rg-dsar-prod-uks-01` and probed from the container:
+`client authentication succeeded`. `invalid_grant`, not `invalid_client`.
+
+Deploying it found two defects that 277 tests, a compiling template and a
+clean type check could not: `MSI_SECRET` made hosted mode fail its own health
+check on every Container Apps deployment it could ever have had, and the `aud`
+guidance pointed at a mismatch that is not one. Both fixed.
+
+The original question, kept for the record:
 
 **Does Entra accept a managed-identity-minted assertion on an
 `authorization_code` grant?** The offline half is answered — MSAL does send
@@ -177,14 +187,18 @@ deliberately invalid authorization code, and read the refusal.
 `invalid_grant` means client authentication succeeded and Entra objected only
 to the bogus code. `invalid_client` means it did not.
 
-**It needs a real Container App and a real UAMI, so it needs Ben's decision to
-deploy.** Nothing else in B-03 is blocked on it.
+~~It needs a real Container App and a real UAMI.~~ Done.
 
 Expect `AADSTS70021` for a few minutes after creating the credential — that is
 replication, not misconfiguration.
 
-### Still to do after the deployment lands
+### Still to do
 
+* **Admin consent**, in the portal — `provision.sh` could not grant it
+  automatically. Nobody can sign in until it is granted and an app role is
+  assigned, which is the design working rather than a fault
+* **The append-blob sink has never written a record.** The blob is created on
+  first append and there are no records yet, because nobody has signed in
 * Two operators signing in concurrently, each as themselves — the
   `prompt=select_account` property, run by hand as well as in CI
 * The immutability policy locked, which is irreversible and therefore a human's
