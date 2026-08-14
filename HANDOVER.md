@@ -37,8 +37,8 @@ causes, all now structurally fixed:
 
 ```bash
 cd /media/ben/data/projects/1b1d65d1/dsar-assist
-DSAR_CLIENT_ID=d043d9be-1173-4024-8975-52fcf08d3551 \
-DSAR_TENANT_ID=764279e8-66e9-49b4-901f-a7592435ae1d \
+DSAR_CLIENT_ID=<DESKTOP_APP_ID> \
+DSAR_TENANT_ID=<TENANT_ID> \
 DSAR_IDENTITY_EXPANSION=1 \
 uv run dsar up
 ```
@@ -52,10 +52,10 @@ anything that will not start.
 
 | | |
 |---|---|
-| Tenant | `764279e8-66e9-49b4-901f-a7592435ae1d` · picnicdev |
-| App registration | `DSAR Assist (Desktop)` · `d043d9be-1173-4024-8975-52fcf08d3551` |
+| Tenant | `<TENANT_ID>` · the demo tenant |
+| App registration | `DSAR Assist (Desktop)` · `<DESKTOP_APP_ID>` |
 | Shape | public client, single tenant, **zero credentials**, `appRoleAssignmentRequired` |
-| Roles | `DSAR.Operator`, `DSAR.Auditor` — `bth.priv` holds Operator |
+| Roles | `DSAR.Operator`, `DSAR.Auditor` — `<operator>` holds Operator |
 | Provision | `./infra/entra/provision.sh desktop` — idempotent |
 
 ---
@@ -117,7 +117,7 @@ If you see the banner on stage, hit **Reset to generated queries**.
 
 | Field | Value |
 |---|---|
-| Primary email | `MeganB@picnicdev.onmicrosoft.com` |
+| Primary email | `MeganB@<tenant>.onmicrosoft.com` |
 | Full name | `Megan Bowen` |
 | Nicknames | `Meg` |
 | Employee ID | `E-4411` |
@@ -133,7 +133,7 @@ The delta is carried by the **free-text mention clauses**. `"Meg"` was worth
 knowledge a directory cannot supply — which is the argument for the operator
 being in the loop.
 
-**Numbers drift.** picnicdev is live; the same query returned 49 one morning
+**Numbers drift.** the demo tenant is live; the same query returned 49 one morning
 and 50 that afternoon. Re-run the pre-run on the day and quote what you get.
 
 ---

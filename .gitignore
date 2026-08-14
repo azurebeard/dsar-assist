@@ -9,6 +9,12 @@ dist/
 build/
 *.egg-info/
 
+# The real tenant, app and operator identifiers the public docs use
+# placeholders for. Not secrets — a tenant id and an app id authorise nothing —
+# but together they name a real tenant, a real registration and a real
+# privileged account, which is reconnaissance rather than a credential.
+LOCAL.md
+
 # Never commit anything that could carry tenant state or credentials.
 # Backstops, not the primary control — the design has no secret to leak.
 .env

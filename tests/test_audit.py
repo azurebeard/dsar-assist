@@ -127,12 +127,15 @@ def test_an_empty_trail_is_intact_not_broken() -> None:
 
 def test_the_subject_appears_only_as_a_case_scoped_pseudonym() -> None:
     trail, sink = _trail()
-    ref = trail.subject_ref("case-1", "MeganB@picnicdev.onmicrosoft.com")
+    ref = trail.subject_ref("case-1", "MeganB@<tenant>.onmicrosoft.com")
     trail.write(Action.IDENTITY_EXPANDED, Outcome.OK, subject_ref=ref, target_id="case-1")
 
     serialised = sink.records[0].to_json()
     assert "meganb" not in serialised.lower()
-    assert "picnicdev" not in serialised.lower()
+    # The domain, not a tenant name. Asserting on a tenant name made this test
+    # depend on which tenant it was written against — and it silently stopped
+    # meaning anything the moment that name was scrubbed for publication.
+    assert "onmicrosoft.com" not in serialised.lower()
     assert ref in serialised
 
 

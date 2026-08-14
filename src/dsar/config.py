@@ -196,7 +196,7 @@ class Config:
     #: Whether a DSAR app role must be present in the ID token.
     #:
     #: Microsoft does not document whether the `roles` claim reaches a **public
-    #: client**. Verified live against picnicdev on 2026-08-14 — it does; see
+    #: client**. Verified live against the demo tenant on 2026-08-14 — it does; see
     #: `verification/2026-08-14-phase1-identity-live.md`. So the default is on:
     #: a safe default that has been observed to work beats an opt-in that
     #: nobody remembers to set.

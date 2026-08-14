@@ -942,3 +942,51 @@ def test_the_container_image_is_pinned_by_digest() -> None:
         line for line in main.splitlines() if "ghcr.io/azurebeard/dsar-assist" in line
     )
     assert "@sha256:" in image_line, f"not digest-pinned: {image_line}"
+
+
+def test_no_tenant_specific_identifier_is_committed() -> None:
+    """This repository is public. Nothing in it may name the real tenant.
+
+    None of these is a credential — a tenant id and an application id identify
+    a registration and authorise nothing, which is the design's own claim and
+    the reason `doctor` prints them freely. But together they name a real
+    tenant, a real registration and a real privileged account, and that is a
+    reconnaissance package: enough to know who to phish and which application
+    to phish them for.
+
+    The real values live in `LOCAL.md`, which is gitignored. The docs carry
+    placeholders. This is what stops the next `HANDOVER.md` update quietly
+    putting them back — which is exactly how they got published the first time.
+    """
+    # Assembled at runtime so the scanner does not match itself, the same trick
+    # the rest of this module uses.
+    forbidden = {
+        "the tenant GUID": "764279e8" + "-66e9-49b4-901f-a7592435ae1d",
+        "the desktop app GUID": "d043d9be" + "-1173-4024-8975-52fcf08d3551",
+        "the tenant name": "picnic" + "dev",
+        "the operator UPN": "bth" + ".priv",
+    }
+    # Markdown INCLUDED, unlike every other scan in this module. The others
+    # exclude it deliberately — docs must be able to name the things they
+    # forbid. Here the docs are the leak: `HANDOVER.md` and `verification/`
+    # are where these values were published. Written out because the first
+    # version of this test used the default file list, passed, and was proven
+    # by tampering to catch nothing at all.
+    files = [
+        path
+        for path in _source_files() + sorted(REPO_ROOT.rglob("*.md"))
+        # Gitignored, and it is the one place these values are supposed to be.
+        if path.name != "LOCAL.md"
+        and not any(part in EXCLUDED_DIRS for part in path.relative_to(REPO_ROOT).parts)
+    ]
+
+    hits: list[str] = []
+    for label, value in forbidden.items():
+        hits += [
+            f"{hit} ({label})"
+            for hit in _scan(re.escape(value), flags=re.I, files=files)
+        ]
+    assert hits == [], (
+        "a real tenant identifier is committed to a public repository; "
+        "use the placeholder and put the value in LOCAL.md"
+    )

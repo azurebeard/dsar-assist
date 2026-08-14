@@ -148,7 +148,7 @@ class GraphClient:
                 # genuine authentication failure, so its absence is the
                 # authorisation layer answering.
                 #
-                # Measured against picnicdev 2026-07-31, then re-measured
+                # Measured against the demo tenant 2026-07-31, then re-measured
                 # 2026-08-02, which showed the first measurement was
                 # under-determined: a deleted case, a case id that never
                 # existed, and a role-less account return byte-identical

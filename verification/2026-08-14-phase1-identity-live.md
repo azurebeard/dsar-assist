@@ -1,8 +1,8 @@
-# Phase 1 identity plane — live against picnicdev
+# Phase 1 identity plane — live against the demo tenant
 
-**Date:** 2026-08-14 · **Tenant:** `764279e8-66e9-49b4-901f-a7592435ae1d`
-**App:** `DSAR Assist (Desktop)` · `d043d9be-1173-4024-8975-52fcf08d3551`
-**Operator:** `bth.priv@picnicdev.onmicrosoft.com`, assigned `DSAR.Operator`
+**Date:** 2026-08-14 · **Tenant:** `<TENANT_ID>`
+**App:** `DSAR Assist (Desktop)` · `<DESKTOP_APP_ID>`
+**Operator:** `<operator>@<tenant>.onmicrosoft.com`, assigned `DSAR.Operator`
 **Method:** full authorization-code flow through the application's own
 `/auth/login` → `/auth/callback`, then `/api/whoami`
 
