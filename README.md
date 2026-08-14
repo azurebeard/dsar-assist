@@ -1,5 +1,7 @@
 # DSAR Assist
 
+> **Resuming work? Read [`HANDOVER.md`](HANDOVER.md) first.**
+
 A control plane for Microsoft Purview eDiscovery cases raised in response to
 Data Subject Access Requests.
 

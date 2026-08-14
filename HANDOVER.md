@@ -1,0 +1,178 @@
+# HANDOVER — DSAR Assist
+
+Written 2026-08-14, at the end of the build session. **Read this first.**
+Everything below is checked against the tenant or the code; where something is
+assumed rather than verified, it says so.
+
+---
+
+## 1 · What and where
+
+| | |
+|---|---|
+| Mission | `1b1d65d1` — DSAR Assist, successor to `dsar-orchestrator` (`8652e638`) |
+| Working copy | `/media/ben/data/projects/1b1d65d1/dsar-assist` |
+| Remote | **github.com/azurebeard/dsar-assist** (private), CI green |
+| Predecessor | `/media/ben/data/projects/8652e638/` — **read-only reference**, do not modify |
+| Status | **Phases 0–4 built and working end to end. Demo next week.** |
+
+A control plane for Purview eDiscovery DSAR cases. **No data plane** — it never
+requests the resource carrying the download permission, no download or preview
+call exists in the eleven-operation table, and exports are collected by a human
+from the Purview portal.
+
+### Why it exists
+
+The predecessor worked and **could not be moved to another machine**. Four
+causes, all now structurally fixed:
+
+1. `msal-extensions` OS-keyring cache needing a hand-made symlink pip cannot create
+2. A local SQLite queue that *was* the source of truth, so work did not travel
+3. No lockfile, no container, no IaC
+4. A console script never installed, while every doc assumed it was
+
+---
+
+## 2 · Run it
+
+```bash
+cd /media/ben/data/projects/1b1d65d1/dsar-assist
+DSAR_CLIENT_ID=d043d9be-1173-4024-8975-52fcf08d3551 \
+DSAR_TENANT_ID=764279e8-66e9-49b4-901f-a7592435ae1d \
+DSAR_IDENTITY_EXPANSION=1 \
+uv run dsar up
+```
+
+Then <http://localhost:8765> → **Sign in with Microsoft**.
+
+`./dsar up` also works (Docker, falling back to uv). `dsar doctor` diagnoses
+anything that will not start.
+
+### Tenant
+
+| | |
+|---|---|
+| Tenant | `764279e8-66e9-49b4-901f-a7592435ae1d` · picnicdev |
+| App registration | `DSAR Assist (Desktop)` · `d043d9be-1173-4024-8975-52fcf08d3551` |
+| Shape | public client, single tenant, **zero credentials**, `appRoleAssignmentRequired` |
+| Roles | `DSAR.Operator`, `DSAR.Auditor` — `bth.priv` holds Operator |
+| Provision | `./infra/entra/provision.sh desktop` — idempotent |
+
+---
+
+## 3 · What is built
+
+| Phase | State |
+|---|---|
+| 0 · Portable skeleton | ✅ one image + `uv` path, three OSes, no Python on host |
+| 1 · Identity plane | ✅ PKCE, `tid` pinned, app roles, CAE declared, in-memory tokens |
+| 2 · Graph as source of truth | ✅ case list rebuilt from Graph — **nothing travels between machines** |
+| 3 · Audit trail | ✅ hash-chained, tamper-evident, no subject data |
+| 4 · Write path | ✅ create case → expand → review KQL → search → delta → export handoff |
+| 5 · Hosted | ✗ designed, unbuilt (B-03) |
+
+**211 tests, `mypy --strict` clean, CI green.** Multi-arch image, non-root
+uid 10001, read-only root, no pip, zero fixable High/Critical.
+
+### Documents worth reading, in order
+
+`docs/DESIGN.md` (why each decision) · `docs/THREAT-MODEL.md` ·
+`docs/BACKLOG.md` (what is left) · `docs/SBOM.md` ·
+`docs/WS10-review-phases1-4-2026-08-14.md` · `docs/OWASP-top10-2026-08-14.md` ·
+`docs/ROADMAP.md` · `verification/` (dated live probes)
+
+---
+
+## 4 · The demo — one blocker
+
+**The expanded query has `AND kind:email` on it.** Measured on `DSAR-2026-0418a`:
+
+```
+             items   mailboxes   sites
+naive           40          12       1
+expanded         4           3       0
+```
+
+`kind:` is a mail-item property and it **zeroes the site count**. The expanded
+query is narrower than the naive one, so the delta reads backwards. Hit
+**Reset to generated queries** and do not apply the `workload` narrowing to the
+query being compared.
+
+### Subject to use — Megan Bowen
+
+| Field | Value |
+|---|---|
+| Primary email | `MeganB@picnicdev.onmicrosoft.com` |
+| Full name | `Megan Bowen` |
+| Nicknames | `Meg` |
+| Employee ID | `E-4411` |
+| Other addresses | **leave empty** |
+
+**Do not claim the alias beat.** Exchange normalises proxy addresses to the
+primary SMTP in the eDiscovery index, so `megan.hartley@` returns exactly what
+the primary returns. **Do not use** `…@example.test` — a reserved domain that
+cannot route, so it returns 0.
+
+The delta is carried by the **free-text mention clauses**. `"Meg"` was worth
++2 items and a third site in a controlled comparison, and a nickname is
+knowledge a directory cannot supply — which is the argument for the operator
+being in the loop.
+
+**Numbers drift.** picnicdev is live; the same query returned 49 one morning
+and 50 that afternoon. Re-run the pre-run on the day and quote what you get.
+
+---
+
+## 5 · Gotchas that cost time
+
+1. **Restart after any code change, and sign in again.** The session caches its
+   Graph reader, so a reload is not enough. This cost an hour twice.
+2. **A stale `dsar up` holds port 8765** and serves new files from disk with old
+   code in memory. Kill by port: `ss -lptn 'sport = :8765'`.
+3. **`az` cannot reach the eDiscovery API** — directory scopes only. Fine for
+   apps, users and roles; useless for cases. The probes do their own sign-in.
+4. **Admin consent leaves a "Default Access" assignment** with the all-zero role
+   GUID. It satisfies `appRoleAssignmentRequired` but no DSAR role reaches the
+   token. Delete it and assign a real role.
+5. **Estimation timing is unpredictable.** Run searches ahead of a demo and
+   present completed numbers. No figure is quoted in the UI on purpose.
+
+---
+
+## 6 · Open — needs you
+
+| # | Item | Effort |
+|---|---|---|
+| **B-04** | **Prove CAE is negotiated** — `cp1` is declared, but whether the STS agreed is only readable from `xms_cc` on an issued token. **Until observed, do not claim near-real-time revocation** | 1 hour, one sign-in |
+| **B-05** | **CA03 decision.** Requiring a compliant device on the *desktop* app hard-blocks a container on an unmanaged Linux box, including this workstation. Recommendation: enforce for hosted, report-only for desktop | a decision |
+| **B-08** | Distroless — closes 4 unfixable Criticals; plan in the last message | half a day |
+| **B-03** | Hosted mode — **start with the FIC spike**, it gates the rest | 2–3 days |
+
+Branch protection is deliberately open (admin bypass) for development speed.
+
+---
+
+## 7 · Things I got wrong, so you can distrust the right parts
+
+Recorded because a handover listing only successes is not a handover.
+
+- **CI was red for four commits** and I did not notice. A `style.css` assertion
+  in the CI shell duplicated a pytest assertion I had updated and it did not.
+- **I pinned four GitHub Actions to SHAs I invented.** None existed. Caught by
+  checking each against the API before pushing.
+- **The launcher's image had never been published**, and it *preferred* Docker —
+  so having Docker installed was a reason the tool did not start. Fixed.
+- **I shipped auth routes with nothing linking to them.** Every test called
+  `/auth/login` directly, so the suite was green while the flow was unreachable.
+- **I guessed the templates API instead of reading it.** `mypy` caught it.
+- **Three frontend tests pinned literals** that then legitimately improved.
+  Assert properties, not expressions.
+- **`WS10 Approved` was recorded before the image had ever been scanned.** The
+  container job had failed earlier, so the blocking Trivy step never ran. Block
+  a verdict on every check having *executed*.
+
+The one that generalises: **SEC-H-02**, a path-traversal escape from the
+operations allowlist, existed because a *comment* claimed a guarantee the regex
+did not provide. It survived two readings and a passed WS10 review in the
+predecessor. Every finding in this project was found by **running something**,
+never by re-reading code.
