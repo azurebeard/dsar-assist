@@ -49,8 +49,14 @@ switch ($Runtime) {
             Start-Job { Start-Sleep 1; Start-Process "http://localhost:$using:Port" } | Out-Null
         }
         New-Item -ItemType Directory -Force -Path $AuditDir | Out-Null
+        # Read-only root, no setuid escalation, no capabilities. The app writes
+        # only to the audit mount, so this costs nothing (WS10 SEC-M-06).
         docker run --rm -it `
             -p "127.0.0.1:${Port}:${Port}" `
+            --read-only `
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m `
+            --security-opt no-new-privileges `
+            --cap-drop ALL `
             -e DSAR_CLIENT_ID -e DSAR_TENANT_ID -e DSAR_IDENTITY_EXPANSION `
             -e "DSAR_PORT=$Port" `
             -e DSAR_IN_CONTAINER=1 `

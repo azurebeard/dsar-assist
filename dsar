@@ -54,8 +54,16 @@ case "$RUNTIME" in
     # container's network namespace, so the host side opens the page.
     if [ "${1:-}" = "up" ]; then open_browser "http://localhost:${PORT}"; fi
     mkdir -p "$AUDIT_DIR"
+    # The application writes only to the audit mount, so a read-only root costs
+    # nothing and removes an exploited process's ability to persist into the
+    # container filesystem. `no-new-privileges` blocks setuid escalation. A
+    # structural test asserts all three are present (WS10 SEC-M-06).
     exec docker run --rm -it \
       -p "127.0.0.1:${PORT}:${PORT}" \
+      --read-only \
+      --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+      --security-opt no-new-privileges \
+      --cap-drop ALL \
       -e DSAR_CLIENT_ID -e DSAR_TENANT_ID -e DSAR_IDENTITY_EXPANSION \
       -e "DSAR_PORT=${PORT}" \
       -e DSAR_IN_CONTAINER=1 \

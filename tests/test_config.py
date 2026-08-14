@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from dsar.config import ConfigError, load_config, purview_case_url
 from dsar.mode import Mode, ModeError, detect_mode
+
+
+def _write_config(home: Path, payload: object) -> Path:
+    """Write a config file with an owner-only mode.
+
+    The default umask (002 on many Linux hosts) creates files group-writable,
+    which `load_config` refuses — whoever can write this file chooses which
+    Entra tenant the operator signs in to.
+    """
+    path = home / "config.json"
+    path.write_text(
+        payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8"
+    )
+    if os.name == "posix":
+        os.chmod(path, 0o600)
+    return path
 
 
 # ------------------------------------------------------------------ mode
@@ -107,9 +124,7 @@ def test_no_scope_requests_download() -> None:
 def test_config_file_is_read_when_env_is_absent(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    (home / "config.json").write_text(
-        json.dumps({"client_id": "from-file", "tenant_id": "t"}), encoding="utf-8"
-    )
+    _write_config(home, {"client_id": "from-file", "tenant_id": "t"})
     config = load_config(home=home, env={})
     assert config.client_id == "from-file"
     assert config._source.endswith("config.json")
@@ -118,9 +133,7 @@ def test_config_file_is_read_when_env_is_absent(tmp_path: Path) -> None:
 def test_env_beats_config_file(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    (home / "config.json").write_text(
-        json.dumps({"client_id": "from-file", "tenant_id": "t"}), encoding="utf-8"
-    )
+    _write_config(home, {"client_id": "from-file", "tenant_id": "t"})
     config = load_config(home=home, env={"DSAR_CLIENT_ID": "from-env"})
     assert config.client_id == "from-env"
 
@@ -128,7 +141,7 @@ def test_env_beats_config_file(tmp_path: Path) -> None:
 def test_malformed_config_file_names_the_file(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
-    (home / "config.json").write_text("{not json", encoding="utf-8")
+    _write_config(home, "{not json")
     with pytest.raises(ConfigError, match="not valid JSON"):
         load_config(home=home, env={})
 

@@ -8,8 +8,15 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     --sbom=true --provenance=true -t <ref> --push .
 
+# Both stages are pinned by digest, not by tag. A tag can be repointed at a
+# different image without any change to this repository, so a tag-only pin
+# means the build is not reproducible and an altered upstream enters the supply
+# chain silently. That matters more than usual here, because reproducibility is
+# this project's reason for existing. Dependabot's docker ecosystem updates
+# digest pins, so this does not freeze the images (WS10 SEC-M-04).
+
 # ---------------------------------------------------------------- builder
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -42,7 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # hosted operational story includes console exec. Distroless has no shell and
 # pins the interpreter to the image. With non-root, no build tools and a Trivy
 # gate in CI the security delta is small; revisit in hardening.
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
 
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin dsar \
  && mkdir -p /var/lib/dsar/audit \

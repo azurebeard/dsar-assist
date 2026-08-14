@@ -72,6 +72,12 @@ because there is no code path that could consume one.
 
 Values may also be written to `$DSAR_HOME/config.json`. Environment wins.
 
+That file must not be writable by group or other — `tenant_id` selects the
+Entra tenant the operator signs in to, so whoever can write it chooses the
+identity provider. A default umask of `002` creates files group-writable, so
+after creating it by hand run `chmod 600 ~/.dsar/config.json`. The refusal
+names the file and the command.
+
 ---
 
 ## How it is built
@@ -85,6 +91,9 @@ Values may also be written to `$DSAR_HOME/config.json`. Environment wins.
 | One HTTP choke point | Exactly three modules may import an HTTP client, asserted by test |
 | Reproducible | `uv.lock` locks across all platform markers; CI fails on a stale lock |
 | Entry points work | The container's `ENTRYPOINT` *is* the console script, both entry points are asserted to agree, and a test greps these docs for commands that would not run on a fresh machine |
+| Container hardened | Non-root uid 10001, read-only root filesystem, `no-new-privileges`, all capabilities dropped, base images digest-pinned |
+| Audit trail protected | Directory forced to `0700` on create *and* when it already exists |
+| Requests observable | Logged by route template, never by concrete path — so 401s and 403s are visible without copying case identifiers into a second, ungoverned store |
 
 Each row exists because the predecessor lost it. The full reasoning is in
 [`docs/DESIGN.md`](docs/DESIGN.md).

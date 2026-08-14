@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
@@ -35,7 +36,9 @@ __all__ = [
     "SCOPES_V1",
     "SCOPE_USER_READ_ALL",
     "purview_case_url",
-    "SECRET_SHAPED_ENV",
+    "secret_shaped_env",
+    "SECRET_SHAPED_SUFFIXES",
+    "ensure_private_dir",
 ]
 
 DEFAULT_HOME = Path.home() / ".dsar"
@@ -89,18 +92,92 @@ SCOPES_V1: tuple[str, ...] = (f"{GRAPH_RESOURCE}/eDiscovery.ReadWrite.All",)
 #: read. There is no narrower scope.
 SCOPE_USER_READ_ALL = f"{GRAPH_RESOURCE}/User.Read.All"
 
-#: Names that must never be set. The design has no secret, so one of these
-#: being present means someone has misunderstood the deployment and is about to
-#: be surprised. `doctor` fails on any match rather than warning.
-SECRET_SHAPED_ENV: tuple[str, ...] = (
-    "DSAR_CLIENT_SECRET",
-    "AZURE_CLIENT_SECRET",
-    "CLIENT_SECRET",
+#: Suffixes that must never appear on a set environment variable. The design
+#: has no secret — desktop is a public client with PKCE, hosted authenticates
+#: with a federated credential minted at runtime — so one of these being
+#: present means someone has misunderstood the deployment and is about to be
+#: surprised by which credential is actually in use. `doctor` fails on a match
+#: rather than warning.
+#:
+#: Suffix matching rather than an explicit list: the list version covered three
+#: names and missed `DSAR_CLIENT_ASSERTION` and `AZURE_CLIENT_CERTIFICATE_PATH`
+#: entirely, which is a check narrower than its own claim (WS10 SEC-L-02).
+SECRET_SHAPED_SUFFIXES: tuple[str, ...] = (
+    "_SECRET",
+    "_PASSWORD",
+    "_ASSERTION",
+    "_CERTIFICATE_PATH",
+    "_PRIVATE_KEY",
 )
+
+
+def secret_shaped_env(env: dict[str, str] | None = None) -> list[str]:
+    """Names of set variables that look like credential material."""
+    environ = os.environ if env is None else env
+    return sorted(
+        name
+        for name, value in environ.items()
+        if value and name.upper().endswith(SECRET_SHAPED_SUFFIXES)
+    )
 
 
 class ConfigError(RuntimeError):
     """Configuration is absent or unusable."""
+
+
+#: Group- and other-write bits. Windows does not model POSIX permissions, so
+#: the checks below no-op there rather than reporting a false result.
+_GROUP_OTHER_WRITE = 0o022
+_GROUP_OTHER_ANY = 0o077
+_POSIX = os.name == "posix"
+
+
+def _assert_not_writable_by_others(path: Path) -> None:
+    """Refuse a config file others can write.
+
+    `tenant_id` from this file builds the authority, so whoever can write it
+    chooses which Entra tenant the operator is sent to. The sign-in page stays
+    a genuine `login.microsoftonline.com` URL, so there is no visual cue, and a
+    multi-tenant attacker application requesting eDiscovery permissions becomes
+    a credible consent-phishing surface.
+
+    Stated honestly: an attacker with this access could also replace the
+    launcher script. This is defence in depth, not a boundary — but it is one
+    line, and a config file that selects an identity provider should not be
+    writable by anyone but its owner.
+    """
+    if not _POSIX:
+        return
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & _GROUP_OTHER_WRITE:
+        raise ConfigError(
+            f"{path} is writable by group or other (mode {oct(mode)}) and will "
+            f"not be trusted — it selects the Entra tenant this tool signs in "
+            f"to. Run: chmod 600 {path}"
+        )
+
+
+def ensure_private_dir(path: Path) -> Path:
+    """Create (or tighten) a directory only its owner may read.
+
+    `mkdir(exist_ok=True)` does not change the mode of a directory that already
+    exists, and the `mode=` argument is masked by the process umask, so both
+    the create and the pre-existing paths need handling. The audit trail holds
+    operator identity, case identifiers and a subject pseudonym; on a shared
+    host the default `0o775` makes all of it readable by every local account
+    (WS10 SEC-M-01).
+    """
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if _POSIX and stat.S_IMODE(path.stat().st_mode) & _GROUP_OTHER_ANY:
+        path.chmod(0o700)
+    return path
+
+
+def dir_mode(path: Path) -> str:
+    """Octal permissions, for reporting. `n/a` where POSIX modes do not apply."""
+    if not _POSIX:
+        return "n/a (non-POSIX)"
+    return oct(stat.S_IMODE(path.stat().st_mode))
 
 
 @dataclass(frozen=True)
@@ -183,6 +260,7 @@ def load_config(
     file_values: dict[str, object] = {}
     config_file = resolved_home / "config.json"
     if config_file.is_file():
+        _assert_not_writable_by_others(config_file)
         try:
             loaded = json.loads(config_file.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:

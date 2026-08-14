@@ -21,7 +21,14 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from dsar import __version__
-from dsar.config import SECRET_SHAPED_ENV, ConfigError, load_config
+from dsar.config import (
+    SECRET_SHAPED_SUFFIXES,
+    ConfigError,
+    dir_mode,
+    ensure_private_dir,
+    load_config,
+    secret_shaped_env,
+)
 from dsar.mode import Mode, ModeError, detect_mode
 
 __all__ = ["Verdict", "Finding", "Check", "CHECKS", "run_checks"]
@@ -197,17 +204,22 @@ def _check_no_secrets() -> Finding:
     means someone has misunderstood the deployment, and is about to be
     surprised by which credential is actually in use. FAIL, not WARN.
     """
-    present = [name for name in SECRET_SHAPED_ENV if os.environ.get(name)]
+    present = secret_shaped_env()
     if not present:
         return Finding(
-            "no secrets", Verdict.PASS, "no secret-shaped environment variable is set"
+            "no secrets",
+            Verdict.PASS,
+            "no variable ending "
+            + ", ".join(SECRET_SHAPED_SUFFIXES)
+            + " is set",
         )
     return Finding(
         "no secrets",
         Verdict.FAIL,
         f"set: {', '.join(present)}",
         "Unset it. This application has no code path that consumes a client "
-        "secret; its presence means the deployment is not what you think.",
+        "secret, certificate or assertion from the environment; its presence "
+        "means the deployment is not what you think.",
     )
 
 
@@ -303,7 +315,7 @@ def _check_audit_dir() -> Finding:
 
     target = config.audit_dir
     try:
-        target.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(target)
         probe = target / ".dsar-write-probe"
         probe.write_text("", encoding="utf-8")
         probe.unlink()
@@ -316,7 +328,27 @@ def _check_audit_dir() -> Finding:
             "In the container this path must be a mount or the trail dies with "
             "the container.",
         )
-    return Finding("audit sink", Verdict.PASS, f"append-only JSONL under {target}")
+
+    mode = dir_mode(target)
+    # `ensure_private_dir` tightens what it can. A mode that survives it is a
+    # filesystem that does not honour chmod — a Windows path, or a mount with
+    # a fixed uid/gid and permission set. Report it rather than claim a
+    # protection the operator does not have.
+    if mode.startswith("0o") and int(mode, 8) & 0o077:
+        return Finding(
+            "audit sink",
+            Verdict.FAIL,
+            f"{target} is mode {mode} — readable or writable by other local accounts",
+            "The audit trail carries operator identity, case identifiers and a "
+            f"subject pseudonym. Run: chmod 700 {target}. If this is a bind "
+            "mount, set the ownership on the host side.",
+        )
+
+    return Finding(
+        "audit sink",
+        Verdict.PASS,
+        f"append-only JSONL under {target} (mode {mode}, owner only)",
+    )
 
 
 def _looks_like_guid(value: str) -> bool:

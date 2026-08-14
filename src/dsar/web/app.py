@@ -30,7 +30,11 @@ from starlette.routing import Route
 
 from dsar import __version__
 from dsar.config import Config, ConfigError, load_config
-from dsar.web.security import ALLOWED_STATIC, SecurityHeadersMiddleware
+from dsar.web.security import (
+    ALLOWED_STATIC,
+    RequestLogMiddleware,
+    SecurityHeadersMiddleware,
+)
 
 __all__ = ["build_app", "serve", "BIND_HOST", "STATIC_DIR"]
 
@@ -50,8 +54,17 @@ async def healthz(request: Request) -> Response:
     A health endpoint is the one route reachable without a session, so it must
     not become an unauthenticated disclosure of which tenant this instance
     serves.
+
+    The version is withheld in hosted mode, where this endpoint is reachable
+    from the internet and a version string is a free assist to CVE matching
+    (WS10 SEC-L-01). On a desktop instance it is useful and the exposure is
+    host loopback, so it stays.
     """
-    return JSONResponse({"status": "ok", "version": __version__})
+    config: Config = request.app.state.config
+    body = {"status": "ok"}
+    if not config.mode.is_hosted:
+        body["version"] = __version__
+    return JSONResponse(body)
 
 
 async def static(request: Request) -> Response:
@@ -78,7 +91,15 @@ def build_app(config: Config) -> Starlette:
     ]
     app = Starlette(routes=routes)
     app.state.config = config
-    return SecurityHeadersMiddleware(app, hosted=config.mode.is_hosted)  # type: ignore[return-value]
+    # Order matters: the header middleware wraps the logger so that headers are
+    # attached to every response including those the logger observes, and the
+    # logger sees the status the client actually receives.
+    wrapped = SecurityHeadersMiddleware(
+        RequestLogMiddleware(app), hosted=config.mode.is_hosted
+    )
+    # The ASGI callable is what uvicorn runs; `app` remains reachable for tests
+    # and for `request.app.state`.
+    return wrapped  # type: ignore[return-value]
 
 
 def serve(port: int | None = None, open_browser: bool = True) -> int:
@@ -108,7 +129,10 @@ def serve(port: int | None = None, open_browser: bool = True) -> int:
         host=BIND_HOST,
         port=effective_port,
         log_config=None,  # our own handler, with the redaction filter attached
-        access_log=False,  # request paths carry case identifiers
+        # uvicorn's access logger writes the concrete path, which carries case
+        # and search identifiers. RequestLogMiddleware logs the route template
+        # instead — the A09 control without the disclosure.
+        access_log=False,
         server_header=False,
         date_header=True,
     )

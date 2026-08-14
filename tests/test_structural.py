@@ -160,6 +160,7 @@ def test_no_client_secret_anywhere() -> None:
         # opposite of using it.
         "tests/conftest.py",
         "tests/test_doctor.py",
+        "tests/test_hardening.py",
         "tests/test_structural.py",
     }
     hits = [
@@ -306,6 +307,41 @@ def test_launchers_publish_to_loopback_only() -> None:
             f"{name} must publish to host loopback only — without the address "
             f"prefix, `-p 8765:8765` binds every interface on the host"
         )
+
+
+def test_launchers_harden_the_container() -> None:
+    """Runtime hardening flags live in the launcher, so assert them there.
+
+    The application writes only to the audit mount, so a read-only root costs
+    nothing. Without these the container can be written to, can gain privileges
+    through a setuid binary, and holds every default capability.
+    """
+    required = (
+        "--read-only",
+        "--tmpfs /tmp",
+        "--security-opt no-new-privileges",
+        "--cap-drop ALL",
+    )
+    for name in ("dsar", "dsar.ps1"):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        missing = [flag for flag in required if flag not in text]
+        assert missing == [], f"{name} is missing {missing}"
+
+
+def test_base_images_are_digest_pinned() -> None:
+    """A tag can be repointed upstream without any change here.
+
+    Reproducibility is this project's reason for existing, so a build that can
+    silently change underneath it is not a defensible base.
+    """
+    lines = [
+        line
+        for line in (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
+        if line.startswith("FROM ")
+    ]
+    assert lines, "no FROM lines found"
+    unpinned = [line for line in lines if "@sha256:" not in line]
+    assert unpinned == [], f"not digest-pinned: {unpinned}"
 
 
 def test_bind_address_is_not_configurable() -> None:
