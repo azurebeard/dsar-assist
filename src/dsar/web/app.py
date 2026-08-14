@@ -33,7 +33,7 @@ from starlette.routing import Route
 from dsar import __version__
 from dsar.config import Config, ConfigError, load_config
 from dsar.auth.desktop import DesktopTokenProvider
-from dsar.auth.msal_client import build_public_client
+from dsar.auth.msal_client import build_client
 from dsar.auth.session import Session
 from dsar.cases.service import CaseService
 from dsar.cases.workflow import Workflow
@@ -235,9 +235,11 @@ def _session_services(
         return session.case_service  # type: ignore[no-any-return]
 
     config: Config = request.app.state.config
-    app_client = build_public_client(config)
+    app_client = build_client(config)
     # Rehydrate MSAL from the session's own cache: the token belongs to this
-    # operator and to nobody else.
+    # operator and to nobody else. Per session, not per process — on a shared
+    # hosted instance a single cache would let one operator's silent refresh
+    # return another operator's token.
     app_client.token_cache = session.cache
     provider = DesktopTokenProvider(app_client, config, session.principal)
     operations = GraphOperations(GraphClient(provider))

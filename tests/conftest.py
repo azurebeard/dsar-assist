@@ -97,13 +97,18 @@ def offline_msal(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     from fakes import FakeHttpClient
 
+    import dsar.web.app as web_app
     import dsar.web.auth_routes as auth_routes
     from dsar.auth import msal_client
 
-    real_build = msal_client.build_public_client
+    # Patched at `build_client`, the single factory that chooses public or
+    # confidential — so a hosted-mode test exercises the confidential path
+    # offline rather than silently falling back to the public one.
+    real_build = msal_client.build_client
 
     def build_offline(config, http_client=None):  # type: ignore[no-untyped-def]
         return real_build(config, http_client=http_client or FakeHttpClient(config.tenant_id))
 
-    monkeypatch.setattr(msal_client, "build_public_client", build_offline)
-    monkeypatch.setattr(auth_routes, "build_public_client", build_offline)
+    monkeypatch.setattr(msal_client, "build_client", build_offline)
+    monkeypatch.setattr(auth_routes, "build_client", build_offline)
+    monkeypatch.setattr(web_app, "build_client", build_offline)

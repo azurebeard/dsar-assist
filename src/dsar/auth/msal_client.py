@@ -8,13 +8,21 @@ one codebase serve both modes rather than two code paths wearing a shared name.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import msal
 
-from dsar.config import Config
+from dsar.auth.managed_identity import client_assertion_for
+from dsar.config import Config, ConfigError
 
-__all__ = ["build_public_client", "CLIENT_CAPABILITIES", "assert_no_broker_pop"]
+__all__ = [
+    "build_client",
+    "build_public_client",
+    "build_confidential_client",
+    "CLIENT_CAPABILITIES",
+    "assert_no_broker_pop",
+]
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +71,69 @@ def build_public_client(
         client_capabilities=CLIENT_CAPABILITIES,
         token_cache=msal.TokenCache(),
         **kwargs,
+    )
+
+
+def build_confidential_client(
+    config: Config,
+    assertion: Callable[[], str],
+    http_client: Any | None = None,
+) -> msal.ConfidentialClientApplication:
+    """The hosted client: confidential, and holding no secret.
+
+    `client_credential` is a dict whose only key is `client_assertion`, and
+    whose value is a **callable**. Both halves are load-bearing and both are
+    asserted structurally:
+
+    * A `str` here would be a client secret. The structural test requires a
+      dict literal keyed exactly `"client_assertion"`, so the type system is
+      not the only thing standing between this design and a secret.
+    * A pre-computed string would be a managed identity token frozen at
+      startup. MSAL invokes the callable lazily at redemption — verified
+      offline, `verification/2026-08-14-fic-assertion-offline.md` — so a
+      long-lived process re-mints rather than beginning to fail token refreshes
+      some hours in, for reasons that look nothing like an expiry.
+
+    Everything downstream receives a `TokenProvider` and cannot tell which
+    client class produced its token. That is what makes this one codebase
+    serving two modes rather than two code paths sharing a name.
+    """
+    kwargs: dict[str, Any] = {}
+    if http_client is not None:
+        kwargs["http_client"] = http_client
+    return msal.ConfidentialClientApplication(
+        config.client_id,
+        authority=config.authority,
+        client_credential={"client_assertion": assertion},
+        client_capabilities=CLIENT_CAPABILITIES,
+        token_cache=msal.TokenCache(),
+        **kwargs,
+    )
+
+
+def build_client(
+    config: Config, http_client: Any | None = None
+) -> msal.ClientApplication:
+    """The client for this deployment. The only place the mode is consulted.
+
+    Three call sites used to name `build_public_client` directly. That is one
+    per place a future confidential mode could be forgotten, and the newest one
+    is exactly where nobody looks — the same argument the ASGI layer makes for
+    keeping the session and origin checks in a single handler.
+
+    Everything downstream takes a `TokenProvider` and cannot discover which
+    class produced its token, so this is the whole of the difference.
+    """
+    if not config.mode.is_hosted:
+        return build_public_client(config, http_client)
+    if not config.uami_client_id:
+        raise ConfigError(
+            "hosted mode needs DSAR_UAMI_CLIENT_ID — the client assertion is "
+            "minted by a user-assigned managed identity, and there is no "
+            "secret to fall back to. This is the design working, not a gap."
+        )
+    return build_confidential_client(
+        config, client_assertion_for(config.uami_client_id), http_client
     )
 
 

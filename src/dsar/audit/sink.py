@@ -26,9 +26,12 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import TYPE_CHECKING, Iterator, Protocol
 
 from dsar.audit.record import GENESIS_HASH, AuditRecord
+
+if TYPE_CHECKING:  # a runtime import here would be circular
+    from dsar.config import Config
 
 __all__ = [
     "AuditSink",
@@ -192,16 +195,40 @@ def _last_record(path: Path) -> AuditRecord | None:
     return last
 
 
-def build_sink(directory: Path | None) -> AuditSink:
+def build_sink(config: "Config") -> AuditSink:
     """The sink for this process: durable where possible, stderr always.
+
+    Hosted writes to an Azure Append Blob, desktop to a file, and both tee to
+    stderr. On Container Apps stderr reaches Log Analytics automatically, which
+    makes it a second copy in a different trust domain for free — and the only
+    copy that exists at all before a durable sink is configured.
 
     A failure to open the durable sink degrades to stderr rather than to
     nothing, and says so loudly. Losing the trail silently is the one outcome
-    worth ruling out — an audit trail that stopped without telling anyone is
-    worse than one that was never claimed.
+    worth ruling out: a trail that stopped without telling anyone is worse than
+    one that was never claimed.
     """
-    if directory is None:
-        return StderrSink()
+    if config.audit_blob_url:
+        if not config.uami_client_id:
+            log.error(
+                "DSAR_AUDIT_BLOB_URL is set but DSAR_UAMI_CLIENT_ID is not, so "
+                "there is no identity to write the trail with — records will go "
+                "to stderr only. The storage account allows no shared key, by "
+                "design, so there is no fallback credential."
+            )
+            return StderrSink()
+        from dsar.audit.blob import AppendBlobSink
+        from dsar.auth.managed_identity import storage_token_for
+
+        return TeeSink(
+            AppendBlobSink(config.audit_blob_url, storage_token_for(config.uami_client_id)),
+            StderrSink(),
+        )
+
+    # `audit_dir` is always a Path — the old signature took `Path | None` and
+    # the None branch came across with it. mypy called it unreachable, which it
+    # was.
+    directory = config.audit_dir
     try:
         from dsar.config import ensure_private_dir
 

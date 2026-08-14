@@ -301,6 +301,7 @@ def test_hosted_sends_prompt_select_account(monkeypatch, config_env, offline_msa
     as them — silently, with a correct-looking UI."""
     monkeypatch.setenv("DSAR_MODE", "hosted")
     monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_UAMI_CLIENT_ID", "99999999-8888-7777-6666-555555555555")
     hosted = TestClient(build_app(load_config()), follow_redirects=False)
     assert "prompt=select_account" in hosted.get("/auth/login").headers["location"]
 
@@ -308,6 +309,7 @@ def test_hosted_sends_prompt_select_account(monkeypatch, config_env, offline_msa
 def test_hosted_cookies_are_secure_and_host_prefixed(monkeypatch, config_env, offline_msal) -> None:
     monkeypatch.setenv("DSAR_MODE", "hosted")
     monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_UAMI_CLIENT_ID", "99999999-8888-7777-6666-555555555555")
     hosted = TestClient(build_app(load_config()), follow_redirects=False)
     cookies = hosted.get("/auth/login").headers.get_list("set-cookie")
     flow = next(c for c in cookies if "dsar_flow" in c)
@@ -338,3 +340,44 @@ def test_logout_requires_a_same_origin_post(client: TestClient) -> None:
     assert client.post(
         "/auth/logout", headers={"Origin": "http://localhost:8765"}
     ).status_code == 302
+
+
+def test_hosted_without_a_managed_identity_refuses_to_start(
+    monkeypatch, config_env, offline_msal
+) -> None:
+    """There is no secret to fall back to, so there is nothing to fall back to.
+
+    Before `build_client` existed, three call sites named `build_public_client`
+    directly and a hosted deployment would have quietly authenticated as a
+    public client — no client authentication at all, and every test still
+    green. The refusal is the design working.
+    """
+    from dsar.config import ConfigError
+
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.delenv("DSAR_UAMI_CLIENT_ID", raising=False)
+    hosted = TestClient(build_app(load_config()), follow_redirects=False)
+    with pytest.raises(ConfigError, match="DSAR_UAMI_CLIENT_ID"):
+        hosted.get("/auth/login")
+
+
+def test_hosted_builds_a_confidential_client(monkeypatch, config_env, offline_msal) -> None:
+    """The mode is consulted in exactly one place, so this is the whole of the
+    difference between the two deployments."""
+    import msal
+
+    from dsar.auth.msal_client import build_client
+    from tests.fakes import FakeHttpClient
+
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_UAMI_CLIENT_ID", "99999999-8888-7777-6666-555555555555")
+    app = build_client(load_config(), http_client=FakeHttpClient())
+    assert isinstance(app, msal.ConfidentialClientApplication)
+    assert set(app.client_credential) == {"client_assertion"}
+
+    monkeypatch.setenv("DSAR_MODE", "desktop")
+    desktop = build_client(load_config(), http_client=FakeHttpClient())
+    assert isinstance(desktop, msal.PublicClientApplication)
+    assert not getattr(desktop, "client_credential", None)

@@ -26,7 +26,7 @@ from dsar.audit.sink import build_sink
 from dsar.audit.trail import AuditTrail
 from dsar.auth.claims import RoleEnforcement, build_principal
 from dsar.auth.errors import NotAssigned
-from dsar.auth.msal_client import build_public_client, flow_extras, scopes_for
+from dsar.auth.msal_client import build_client, flow_extras, scopes_for
 from dsar.auth.provider import Principal
 from dsar.auth.session import (
     FlowStore,
@@ -60,7 +60,7 @@ class AuthState:
         # One trail per process: the sequence and the chain head are process
         # state, and two writers with two heads produce two chains that both
         # look valid and neither of which is the record.
-        self.trail = AuditTrail(build_sink(config.audit_dir))
+        self.trail = AuditTrail(build_sink(config))
         self.api_limiter = RateLimiter(*API_LIMIT)
         self.poll_floor = MinInterval(POLL_FLOOR_SECONDS)
         self.session_cookie, self.flow_cookie = cookie_names(config.mode.is_hosted)
@@ -112,7 +112,7 @@ async def login(request: Request) -> Response:
         )
 
     claims = request.query_params.get("claims") or None
-    app = build_public_client(config)
+    app = build_client(config)
 
     flow: dict[str, Any] = app.initiate_auth_code_flow(
         scopes_for(config),
@@ -154,7 +154,7 @@ async def callback(request: Request) -> Response:
             status_code=400,
         )
 
-    app = build_public_client(config)
+    app = build_client(config)
     result = app.acquire_token_by_auth_code_flow(flow, dict(request.query_params))
 
     if "access_token" not in result:
