@@ -38,7 +38,7 @@ dsar = "dsar.__main__:main"
 [dependency-groups]
 dev = [
     "pytest>=8.3,<10",
-    "mypy>=1.14,<2",
+    "mypy>=2.3.0,<3",
 ]
 
 # A src layout, deliberately. It frees the repo root for the `dsar` launcher
