@@ -111,14 +111,70 @@ to say `sub` is the one to compare, and why the `aud` GUID is expected.
 
 ---
 
+## The append-blob trail — proven the same day
+
+An operator ran a case through the hosted instance. Read back from
+`audit-2026-08-14.jsonl`:
+
+```
+blobType     AppendBlob
+blocks       13 committed   (one per record, as designed)
+records      13
+verify       13 record(s), chain intact.
+```
+
+**Append-only is the storage primitive, not a convention.** Thirteen records
+produced thirteen committed append blocks; `comp=appendblock` has no offset and
+cannot overwrite.
+
+### What the real records confirm
+
+| Claim | Evidence |
+|---|---|
+| The subject appears only as a case-scoped pseudonym | `subject_ref: 7e4ba3ab68401b36`. Greps for `megan`, `bowen`, `E-4411`, `participants`, `kind:` all return **0** |
+| No KQL is recorded | 0 |
+| `uti` is captured for the cross-log join | `U86Knr3SDEmIAemfb3tcAA` |
+| Refusals are recorded, not only successes | `seq 1  sign_in_refused  denied  no DSAR app role` |
+| Writes are bracketed | `case_created attempted` → `case_created ok` |
+
+The only address in the trail is the **operator's own** UPN, which is by design
+— display alongside `oid`, never the key.
+
+### The roles question, answered by the trail
+
+```
+seq  2  sign_in  ok  DSAR.Auditor, DSAR.Operator
+seq 12  sign_in  ok  DSAR.Auditor, DSAR.Operator
+```
+
+Both roles are in the token. Nothing "won" — app roles are additive, and the
+interface was showing the effect rather than the roles.
+
+### One interrupted write, and it is the documented one
+
+```
+seq 13  case_created  attempted     (no matching `ok`)
+```
+
+That is the shape `Outcome.ATTEMPTED` exists to make visible. It coincides with
+a revision update — *"a revision update signs everyone out"*, recorded as a
+property of the single-replica design rather than discovered. The trail showing
+it is the mechanism working, not a fault.
+
 ## Still unproven
 
-- **The append-blob audit sink has never written a record.** The blob is
-  created lazily on first append, and no record exists because nobody has
-  signed in yet. Needs admin consent plus an app-role assignment.
 - **Admin consent could not be granted automatically** by `provision.sh`; it
-  needs a Global Administrator in the portal. Until then nobody can sign in,
-  which is `appRoleAssignmentRequired` and consent working, not a fault.
-- **Two operators concurrently**, each as themselves — the
-  `prompt=select_account` property.
+  needs a Global Administrator in the portal.
+- **Two operators concurrently**, each as themselves.
 - **The hosted attack surface is unreviewed.** WS10 has not run against it.
+
+## Found by reading the real trail
+
+`dsar audit verify` constructed a `JsonlFileSink` unconditionally, so in the
+hosted container it read an empty directory and reported *"no audit trail"*
+while thirteen records sat in the blob. The verifier could not verify the only
+trail there was, and this chain had to be checked by hand.
+
+The claim was that the verifier is the same code either side. It is —
+`verify_chain` never changed. What was missing is that the *command* could not
+reach the hosted trail, which makes the claim true and useless. Fixed.

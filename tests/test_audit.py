@@ -241,3 +241,64 @@ def test_tee_head_comes_from_the_primary_alone() -> None:
     tee = TeeSink(primary, StderrSink())
     AuditTrail(tee).write(Action.SIGN_IN, Outcome.OK)
     assert tee.head() == primary.head()
+
+
+# ------------------------------------------------- which trail gets verified
+
+
+def test_audit_verify_reads_the_blob_when_hosted(monkeypatch, tmp_path) -> None:
+    """`dsar audit verify` must read the trail the deployment actually writes.
+
+    It constructed a `JsonlFileSink` unconditionally. In hosted mode the trail
+    is an append blob and that directory is empty, so the command reported "no
+    audit trail" while thirteen real records sat in the blob — the verifier
+    unable to verify the only trail there was.
+
+    The claim was that the verifier is the same code either side. It is;
+    `verify_chain` never changed. What was missing is that the *command* could
+    not reach the hosted trail, which makes the claim true and useless. Found
+    by reading a deployed instance's trail by hand.
+    """
+    from dsar.audit.blob import AppendBlobSink
+    from dsar.audit.report import _reader
+    from dsar.audit.sink import JsonlFileSink
+    from dsar.config import load_config
+
+    monkeypatch.setenv("DSAR_CLIENT_ID", "11111111-2222-3333-4444-555555555555")
+    monkeypatch.setenv("DSAR_TENANT_ID", "66666666-7777-8888-9999-aaaaaaaaaaaa")
+    monkeypatch.setenv("DSAR_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DSAR_AUDIT_DIR", str(tmp_path / "audit"))
+
+    reader, location = _reader(load_config())
+    assert isinstance(reader, JsonlFileSink)
+
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_UAMI_CLIENT_ID", "99999999-8888-7777-6666-555555555555")
+    monkeypatch.setenv(
+        "DSAR_AUDIT_BLOB_URL", "https://st.blob.core.windows.net/audit"
+    )
+
+    reader, location = _reader(load_config())
+    assert isinstance(reader, AppendBlobSink)
+    assert location == "https://st.blob.core.windows.net/audit"
+
+
+def test_a_hosted_trail_with_no_identity_refuses_rather_than_reading_nothing(
+    monkeypatch, tmp_path
+) -> None:
+    """Reporting an empty trail when one exists and cannot be read is the
+    worst answer available: it looks like nothing happened."""
+    from dsar.audit.report import _reader
+    from dsar.config import ConfigError, load_config
+
+    monkeypatch.setenv("DSAR_CLIENT_ID", "11111111-2222-3333-4444-555555555555")
+    monkeypatch.setenv("DSAR_TENANT_ID", "66666666-7777-8888-9999-aaaaaaaaaaaa")
+    monkeypatch.setenv("DSAR_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DSAR_MODE", "hosted")
+    monkeypatch.setenv("DSAR_BASE_URL", "https://dsar.example.co.uk")
+    monkeypatch.setenv("DSAR_AUDIT_BLOB_URL", "https://st.blob.core.windows.net/audit")
+    monkeypatch.delenv("DSAR_UAMI_CLIENT_ID", raising=False)
+
+    with pytest.raises(ConfigError, match="DSAR_UAMI_CLIENT_ID"):
+        _reader(load_config())
