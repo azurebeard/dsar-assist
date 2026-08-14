@@ -184,3 +184,37 @@ def test_the_assertion_check_reports_the_three_values_the_fic_must_match(
     assert "api://AzureADTokenExchange" in finding.detail
     assert "PRINCIPAL-ID-CASE-SENSITIVE" in finding.detail
     assert "principal id" in finding.fix and "case-sensitive" in finding.fix
+
+
+def test_the_platform_identity_variable_is_not_a_client_secret(
+    monkeypatch, config_env
+) -> None:
+    """Container Apps injects `MSI_SECRET`, and it is not a secret of ours.
+
+    It is the legacy name for the value authenticating a caller to the *local*
+    managed identity endpoint — the same value as `IDENTITY_HEADER`, and the
+    thing that makes the secretless design work at all. It authorises nothing
+    against Entra and nothing against Graph.
+
+    Found by deploying. Hosted mode failed `doctor` on its first real run, and
+    would have failed on every Container Apps deployment it could ever have,
+    because the check reasoned about variable names and this one is named like
+    the thing it is not.
+    """
+    from dsar.doctor.checks import Verdict, _check_no_secrets
+
+    monkeypatch.setenv("MSI_SECRET", "platform-injected-value")
+    assert _check_no_secrets().verdict is Verdict.PASS
+
+
+def test_a_real_client_secret_is_still_caught(monkeypatch, config_env) -> None:
+    """Allowlisted by exact name, not by relaxing the suffix rule. The check
+    that let MSI_SECRET through must still refuse the thing it was built for."""
+    from dsar.doctor.checks import Verdict, _check_no_secrets
+
+    monkeypatch.setenv("MSI_SECRET", "platform-injected-value")
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", "a-real-one")
+    finding = _check_no_secrets()
+    assert finding.verdict is Verdict.FAIL
+    assert "AZURE_CLIENT_SECRET" in finding.detail
+    assert "MSI_SECRET" not in finding.detail

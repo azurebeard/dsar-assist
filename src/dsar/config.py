@@ -111,13 +111,32 @@ SECRET_SHAPED_SUFFIXES: tuple[str, ...] = (
 )
 
 
+#: Injected by the Azure Container Apps platform, not by this deployment, and
+#: not credentials for this application.
+#:
+#: `MSI_SECRET` is the legacy name for the value that authenticates a caller to
+#: the *local* managed identity endpoint — the same value as `IDENTITY_HEADER`.
+#: It is what makes the secretless design work: it is how the container proves
+#: to the platform that it may mint the client assertion. It authorises nothing
+#: against Entra and nothing against Graph.
+#:
+#: Found by deploying. Hosted mode failed `doctor` on its first real run, on
+#: every Container Apps deployment it could ever have, because the check
+#: reasoned about variable *names* and this one is named like the thing it is
+#: not. Allowlisted by exact name rather than by relaxing the suffix rule, so a
+#: genuine `AZURE_CLIENT_SECRET` is still caught.
+PLATFORM_INJECTED_ENV: frozenset[str] = frozenset({"MSI_SECRET"})
+
+
 def secret_shaped_env(env: dict[str, str] | None = None) -> list[str]:
     """Names of set variables that look like credential material."""
     environ = os.environ if env is None else env
     return sorted(
         name
         for name, value in environ.items()
-        if value and name.upper().endswith(SECRET_SHAPED_SUFFIXES)
+        if value
+        and name.upper().endswith(SECRET_SHAPED_SUFFIXES)
+        and name.upper() not in PLATFORM_INJECTED_ENV
     )
 
 

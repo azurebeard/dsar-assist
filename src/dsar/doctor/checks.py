@@ -413,9 +413,12 @@ def _check_client_assertion() -> Finding:
         "client assertion",
         Verdict.PASS,
         f"aud={claims.get('aud')} iss={claims.get('iss')} sub={claims.get('sub')}",
-        "The federated credential must match all three EXACTLY. `sub` is the "
-        "identity's principal id and is case-sensitive — it is not the client "
-        "id in DSAR_UAMI_CLIENT_ID.",
+        "`sub` must match the federated credential EXACTLY — it is the "
+        "identity's principal id, case-sensitive, and is not the client id in "
+        "DSAR_UAMI_CLIENT_ID. `aud` is shown as the resource's GUID because "
+        "that is what Entra puts in the token; the credential still registers "
+        "the literal `api://AzureADTokenExchange`, so a GUID here is correct "
+        "and not a mismatch.",
     )
 
 
