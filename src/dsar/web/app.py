@@ -132,6 +132,13 @@ async def api(request: Request) -> Response:
     if principal is None:
         return JSONResponse({"error": "not_signed_in"}, status_code=401)
 
+    # Keyed on the session, not the peer: every call here spends the operator's
+    # own Graph token, and Purview throttles the ACCOUNT rather than the
+    # process — so a runaway tab degrades that operator's other tools too.
+    wait = state.api_limiter.check(principal.oid)
+    if wait is not None:
+        return _too_many(wait)
+
     try:
         body = await request.json()
     except Exception:
@@ -141,6 +148,15 @@ async def api(request: Request) -> Response:
 
     session = state.sessions.get(request.cookies.get(state.session_cookie))
     assert session is not None  # current_principal just resolved it
+
+    # The statistics poll is the one call the UI makes on a timer. The client
+    # already backs off 10s -> 30s -> 60s; this is the floor that holds when
+    # the client is wrong, which is the only time a floor matters.
+    if request.url.path == "/api/statistics":
+        search_id = str(body.get("search_id", ""))
+        wait = state.poll_floor.check(f"{principal.oid}:{search_id}")
+        if wait is not None:
+            return _too_many(wait)
 
     service, workflow = _session_services(request, session)
     status, payload = handle(
@@ -152,6 +168,15 @@ async def api(request: Request) -> Response:
         workflow=workflow,
     )
     return JSONResponse(payload, status_code=status)
+
+
+def _too_many(seconds: float) -> Response:
+    response = JSONResponse(
+        {"error": "rate_limited", "message": "Too many requests. Slow down."},
+        status_code=429,
+    )
+    response.headers["Retry-After"] = str(max(1, int(seconds) + 1))
+    return response
 
 
 def _session_services(

@@ -221,11 +221,21 @@ def test_flow_lookup_rejects_unknown_and_none() -> None:
     assert store.take(None) is None
 
 
-def test_flow_store_is_bounded() -> None:
+def test_flow_store_is_bounded_and_refuses_rather_than_evicts() -> None:
+    """The bound is kept, but a full store now refuses instead of evicting.
+
+    Evicting made an unauthenticated caller able to cancel a real operator's
+    in-progress sign-in, which is a bystander paying for someone else's
+    traffic. Refusing affects the caller causing it.
+    """
+    from dsar.auth.session import FlowStoreFull
+
     store = FlowStore(max_pending=3)
-    for _ in range(6):
+    for _ in range(3):
         store.put({"state": "s"})
-    assert len(store) <= 3
+    with pytest.raises(FlowStoreFull):
+        store.put({"state": "one too many"})
+    assert len(store) == 3
 
 
 # ---------------------------------------------------------------- routes

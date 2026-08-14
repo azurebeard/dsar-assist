@@ -30,7 +30,14 @@ import msal
 
 from dsar.auth.provider import Principal
 
-__all__ = ["Session", "SessionStore", "FlowStore", "SESSION_COOKIE", "FLOW_COOKIE"]
+__all__ = [
+    "Session",
+    "SessionStore",
+    "FlowStore",
+    "FlowStoreFull",
+    "SESSION_COOKIE",
+    "FLOW_COOKIE",
+]
 
 #: `__Host-` is the strongest cookie prefix: it requires Secure, forbids Domain
 #: and pins Path=/, so a subdomain cannot set or overwrite it. It is applied in
@@ -66,6 +73,10 @@ MAX_PENDING_FLOWS = 64
 
 def new_id() -> str:
     return secrets.token_urlsafe(_ID_BYTES)
+
+
+class FlowStoreFull(RuntimeError):
+    """Too many sign-ins are in progress to accept another."""
 
 
 @dataclass
@@ -151,12 +162,26 @@ class FlowStore:
         self._max = max_pending
 
     def put(self, flow: dict[str, Any]) -> str:
-        key = new_id()
+        """Store a pending flow. Raises `FlowStoreFull` rather than evicting.
+
+        The first version evicted the oldest entry to make room, which meant an
+        unauthenticated caller hitting `/auth/login` repeatedly could push a
+        real operator's in-progress sign-in out of the store — their callback
+        then returned "sign-in expired" for no reason they could see.
+
+        Refusing is the better failure: it is visible, it affects the caller
+        causing it rather than a bystander, and combined with the five-minute
+        TTL the store drains on its own. The rate limiter in `web/limits.py` is
+        what stops it filling in the first place; this is the backstop for when
+        that is misconfigured.
+        """
         with self._lock:
             self._evict_locked()
             if len(self._flows) >= self._max:
-                oldest = min(self._flows.items(), key=lambda kv: kv[1][0])[0]
-                del self._flows[oldest]
+                raise FlowStoreFull(
+                    f"{self._max} sign-ins already in progress; try again shortly"
+                )
+            key = new_id()
             self._flows[key] = (time.monotonic(), flow)
         return key
 

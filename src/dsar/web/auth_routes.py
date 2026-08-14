@@ -25,7 +25,19 @@ from dsar.auth.claims import RoleEnforcement, build_principal
 from dsar.auth.errors import NotAssigned
 from dsar.auth.msal_client import build_public_client, flow_extras, scopes_for
 from dsar.auth.provider import Principal
-from dsar.auth.session import FlowStore, SessionStore, cookie_names
+from dsar.auth.session import (
+    FlowStore,
+    FlowStoreFull,
+    SessionStore,
+    cookie_names,
+)
+from dsar.web.limits import (
+    API_LIMIT,
+    LOGIN_LIMIT,
+    POLL_FLOOR_SECONDS,
+    MinInterval,
+    RateLimiter,
+)
 from dsar.web.security import origin_ok
 from dsar.config import Config
 
@@ -41,6 +53,9 @@ class AuthState:
         self.config = config
         self.sessions = SessionStore()
         self.flows = FlowStore()
+        self.login_limiter = RateLimiter(*LOGIN_LIMIT)
+        self.api_limiter = RateLimiter(*API_LIMIT)
+        self.poll_floor = MinInterval(POLL_FLOOR_SECONDS)
         self.session_cookie, self.flow_cookie = cookie_names(config.mode.is_hosted)
         # Role enforcement is a setting, not a hard-coded rule. The Phase 1
         # probe decides which: REQUIRED when the `roles` claim is emitted to
@@ -77,6 +92,18 @@ async def login(request: Request) -> Response:
     state: AuthState = request.app.state.auth
     config = state.config
 
+    # Unauthenticated and it allocates server state, so it is limited. Keyed on
+    # the peer address: on the desktop that is always loopback and the limit is
+    # a formality, but the endpoint is the same code in hosted mode where it is
+    # not. Behind Container Apps ingress the peer is the ingress, so this bounds
+    # the total rather than per-client — worth knowing before relying on it.
+    peer = request.client.host if request.client else "unknown"
+    wait = state.login_limiter.check(peer)
+    if wait is not None:
+        return _retry_later(
+            "Too many sign-in attempts. Wait a moment and try again.", wait
+        )
+
     claims = request.query_params.get("claims") or None
     app = build_public_client(config)
 
@@ -94,7 +121,14 @@ async def login(request: Request) -> Response:
     # held server-side and the client gets only an opaque key: `state` alone is
     # not a CSRF control, because a `state` the attacker chose is a `state`
     # that matches.
-    key = state.flows.put(flow)
+    try:
+        key = state.flows.put(flow)
+    except FlowStoreFull:
+        log.warning("pending sign-in store is full; refusing a new flow")
+        return _retry_later(
+            "Too many sign-ins are in progress. Try again shortly.", 30.0
+        )
+
     response = RedirectResponse(flow["auth_uri"], status_code=302)
     _set_cookie(response, state.flow_cookie, key, config, max_age=300)
     return response
@@ -188,6 +222,14 @@ def current_principal(request: Request) -> Principal | None:
     state: AuthState = request.app.state.auth
     session = state.sessions.get(request.cookies.get(state.session_cookie))
     return session.principal if session else None
+
+
+def _retry_later(message: str, seconds: float) -> Response:
+    response = HTMLResponse(
+        f"<h1>Slow down</h1><p>{_escape(message)}</p>", status_code=429
+    )
+    response.headers["Retry-After"] = str(max(1, int(seconds) + 1))
+    return response
 
 
 def _escape(text: str) -> str:

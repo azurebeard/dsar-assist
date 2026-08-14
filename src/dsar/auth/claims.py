@@ -76,13 +76,19 @@ def build_principal(
         raise ClaimError("ID token carries no `tid` claim")
     if tid != expected_tenant_id:
         # Should be unreachable behind a tenant-scoped authority. Unreachable
-        # is a good place for an assertion, not a reason to omit one.
+        # is a good place for an assertion, not a reason to omit one — and a
+        # thing that cannot happen is exactly the thing worth logging when it
+        # does.
+        log.warning(
+            "REFUSED sign-in: token from tenant %s, expected %s", tid, expected_tenant_id
+        )
         raise ClaimError(
             f"ID token is from tenant {tid}, expected {expected_tenant_id}"
         )
 
     oid = str(id_token_claims.get("oid", ""))
     if not oid:
+        log.warning("REFUSED sign-in: ID token carries no `oid` claim")
         raise ClaimError("ID token carries no `oid` claim; cannot identify the operator")
 
     raw_roles = id_token_claims.get("roles") or []
@@ -100,6 +106,15 @@ def build_principal(
     recognised = roles & KNOWN_ROLES
     if not recognised:
         if enforcement is RoleEnforcement.REQUIRED:
+            # A refused authorisation must leave a trace. Without this, the
+            # only record that someone was turned away is the 403 they saw,
+            # and the difference between one typo and a hundred attempts is
+            # invisible (OWASP A09).
+            log.warning(
+                "REFUSED sign-in: oid=%s holds no DSAR app role (roles=%s)",
+                oid,
+                sorted(roles) or "none",
+            )
             raise NotAssigned(str(id_token_claims.get("preferred_username", "")))
         log.info(
             "no DSAR app role in the ID token; proceeding on the strength of "

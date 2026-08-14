@@ -199,3 +199,82 @@ def test_permissions_policy_denies_every_named_feature(config_env) -> None:
     policy = TestClient(build_app(load_config())).get("/").headers["Permissions-Policy"]
     assert "camera=()" in policy and "microphone=()" in policy
     assert "*" not in policy and "self" not in policy
+
+
+# ------------------------------------------ A04 / A07 rate limiting
+
+
+def test_login_is_rate_limited(config_env, offline_msal) -> None:
+    """Unauthenticated and it allocates server state, so it must be bounded."""
+    from dsar.web.limits import LOGIN_LIMIT
+
+    client = TestClient(build_app(load_config()), follow_redirects=False)
+    limit, _ = LOGIN_LIMIT
+    codes = [client.get("/auth/login").status_code for _ in range(limit + 3)]
+    assert 429 in codes, f"no rate limit hit in {limit + 3} attempts: {set(codes)}"
+    throttled = client.get("/auth/login")
+    assert throttled.status_code == 429
+    assert int(throttled.headers["Retry-After"]) >= 1
+
+
+def test_pending_flows_are_refused_not_evicted() -> None:
+    """Evicting made an unauthenticated caller able to cancel a real operator's
+    in-progress sign-in — a bystander paying for someone else's traffic."""
+    from dsar.auth.session import FlowStore, FlowStoreFull
+
+    store = FlowStore(max_pending=3)
+    victim = store.put({"state": "victim"})
+    for _ in range(2):
+        store.put({"state": "other"})
+    with pytest.raises(FlowStoreFull):
+        store.put({"state": "attacker"})
+    assert store.take(victim) is not None, "the victim's flow was evicted"
+
+
+def test_rate_limiter_records_denied_attempts() -> None:
+    """A caller that ignores a 429 must not earn a free pass by continuing."""
+    from dsar.web.limits import RateLimiter
+
+    limiter = RateLimiter(2, 60.0)
+    assert limiter.check("k") is None
+    assert limiter.check("k") is None
+    first = limiter.check("k")
+    second = limiter.check("k")
+    assert first is not None and second is not None
+
+
+def test_poll_floor_blocks_a_fast_repeat() -> None:
+    from dsar.web.limits import MinInterval
+
+    floor = MinInterval(5.0)
+    assert floor.check("search-1") is None
+    assert floor.check("search-1") is not None
+    assert floor.check("search-2") is None, "the floor must be per-key"
+
+
+# --------------------------------------------------- A09 auth logging
+
+
+def test_a_refused_authorisation_is_logged(caplog) -> None:
+    """Without this, the only record that someone was turned away is the 403
+    they saw, and one typo is indistinguishable from a hundred attempts."""
+    from dsar.auth.claims import RoleEnforcement, build_principal
+    from dsar.auth.errors import NotAssigned
+
+    with caplog.at_level(logging.WARNING, logger="dsar.auth.claims"):
+        with pytest.raises(NotAssigned):
+            build_principal(
+                {"tid": "t", "oid": "o", "preferred_username": "x@example.test"},
+                expected_tenant_id="t",
+                enforcement=RoleEnforcement.REQUIRED,
+            )
+    assert any("REFUSED" in r.getMessage() for r in caplog.records)
+
+
+def test_a_wrong_tenant_token_is_logged(caplog) -> None:
+    from dsar.auth.claims import ClaimError, build_principal
+
+    with caplog.at_level(logging.WARNING, logger="dsar.auth.claims"):
+        with pytest.raises(ClaimError):
+            build_principal({"tid": "other", "oid": "o"}, expected_tenant_id="t")
+    assert any("REFUSED" in r.getMessage() for r in caplog.records)
