@@ -302,3 +302,98 @@ def test_a_hosted_trail_with_no_identity_refuses_rather_than_reading_nothing(
 
     with pytest.raises(ConfigError, match="DSAR_UAMI_CLIENT_ID"):
         _reader(load_config())
+
+
+# ------------------------------------------------ two writers, one trail
+
+
+class _ContendedSink:
+    """A sink that refuses an append whose predecessor has moved.
+
+    Models what `AppendBlobSink` does with `x-ms-blob-condition-appendpos`:
+    the service appends only if the blob is exactly the expected length, so a
+    second writer is refused rather than silently landing beside the first.
+    """
+
+    def __init__(self) -> None:
+        self.records: list = []
+        self.refusals = 0
+
+    def append(self, record) -> None:
+        from dsar.audit.sink import StaleHead
+
+        expected = self.records[-1].hash if self.records else GENESIS_HASH
+        if record.prev_hash != expected:
+            self.refusals += 1
+            raise StaleHead("the head moved")
+        self.records.append(record)
+
+    def head(self):
+        if not self.records:
+            return 0, GENESIS_HASH
+        return self.records[-1].seq, self.records[-1].hash
+
+
+def test_two_writers_during_a_rollout_do_not_corrupt_the_trail() -> None:
+    """WS10 SEC-H-01. `maxReplicas: 1` bounds a *revision*, not the app.
+
+    A Container Apps rolling deployment starts the new replica and stops the
+    old one only once the new one is healthy — measured at 46s and 37s on the
+    live instance — so every deploy runs two `dsar` processes, each holding a
+    head it read at start.
+
+    Before the conditional append, that produced duplicate sequence numbers and
+    `verify_chain` reported five breaks as "a record was removed or inserted
+    here": not two valid chains as the Bicep claimed, but one trail reading as
+    tampered, permanently, under a 2555-day immutability policy.
+    """
+    from dsar.audit.trail import AuditTrail
+
+    sink = _ContendedSink()
+    old_revision, new_revision = AuditTrail(sink), AuditTrail(sink)
+
+    old_revision.write(Action.SIGN_IN, Outcome.OK, actor_oid="a")
+    new_revision.write(Action.SIGN_IN, Outcome.OK, actor_oid="b")
+    old_revision.write(Action.CASE_CREATED, Outcome.OK, target_id="case-a")
+    new_revision.write(Action.CASE_CREATED, Outcome.OK, target_id="case-b")
+
+    assert sink.refusals >= 1, "the contention was never exercised"
+    assert [r.seq for r in sink.records] == [1, 2, 3, 4], "sequence forked"
+
+    result = verify_chain(sink.records)
+    assert result.intact, result.summary()
+    # Every record survives. The refusal rebuilds; it never drops.
+    assert result.records == 4
+
+
+def test_a_refused_append_is_rebuilt_not_lost() -> None:
+    """The refused write did not land, which is what makes the retry safe —
+    sequence and hash advance only after the sink accepts."""
+    from dsar.audit.trail import AuditTrail
+
+    sink = _ContendedSink()
+    a, b = AuditTrail(sink), AuditTrail(sink)
+
+    a.write(Action.SIGN_IN, Outcome.OK, actor_oid="a")
+    record = b.write(Action.CASE_CREATED, Outcome.OK, target_id="rebuilt")
+
+    assert record.seq == 2
+    assert record.prev_hash == sink.records[0].hash
+    assert record.target_id == "rebuilt"
+    assert verify_chain(sink.records).intact
+
+
+def test_a_head_that_never_settles_fails_loudly() -> None:
+    """Bounded, not unbounded. A trail that blocks forever is an outage, and
+    losing one record loudly beats hanging the request that produced it."""
+    from dsar.audit.trail import AuditTrail
+    from dsar.audit.sink import StaleHead
+
+    class _AlwaysStale(_ContendedSink):
+        def append(self, record) -> None:
+            self.refusals += 1
+            raise StaleHead("never settles")
+
+    trail = AuditTrail(_AlwaysStale())
+    with pytest.raises(RuntimeError, match="head kept moving"):
+        trail.write(Action.SIGN_IN, Outcome.OK, actor_oid="a")

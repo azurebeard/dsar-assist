@@ -897,12 +897,30 @@ def test_the_ip_restriction_parameter_has_no_default() -> None:
 
 
 def test_the_container_app_is_pinned_to_one_replica() -> None:
-    """Not a cost decision. Sessions are in-process and the audit chain's head
-    is process state — two writers would fork the trail into two chains that
-    both verify and neither of which is the record."""
+    """One replica per revision. It is a session-affinity control and NOT a
+    single-writer guarantee.
+
+    This test used to be cited as the guard for the audit chain's single
+    writer. It greps for two literals that are present, true, and unable to
+    fail — while the property they were cited for is violated on every single
+    deployment, because `maxReplicas` bounds a *revision* and a rolling update
+    runs two of them (WS10 SEC-H-01).
+
+    The chain's actual guard is the sink's conditional append plus
+    `AuditTrail`'s rebuild, covered by
+    `test_two_writers_during_a_rollout_do_not_corrupt_the_trail`. This one is
+    kept for what it does bound — the in-process session store — and the
+    comment it checks now has to say so, so the claim and the check cannot
+    drift apart again.
+    """
     source = _bicep_source()
     assert "minReplicas: 1" in source
     assert "maxReplicas: 1" in source
+    # The Bicep must not restate the single-writer claim this cannot support.
+    assert "two chains that both verify" not in source, (
+        "the Bicep still claims one replica gives the audit chain a single "
+        "writer; it does not, across revisions"
+    )
 
 
 def test_the_audit_container_is_append_protected() -> None:

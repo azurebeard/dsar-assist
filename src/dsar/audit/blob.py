@@ -34,8 +34,9 @@ from collections.abc import Callable, Iterator
 import httpx
 
 from dsar.audit.record import GENESIS_HASH, AuditRecord
+from dsar.audit.sink import StaleHead
 
-__all__ = ["AppendBlobSink", "BlobSinkError", "STORAGE_API_VERSION"]
+__all__ = ["AppendBlobSink", "BlobSinkError", "StaleHead", "STORAGE_API_VERSION"]
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +57,15 @@ _TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
 class BlobSinkError(RuntimeError):
     """The append-blob trail could not be written or read."""
+
+
+#: `StaleHead` is imported from the sink contract, not defined here. It
+#: changes what every caller must do — the record was NOT written and must
+#: be rebuilt on the real predecessor — so it belongs to the interface
+#: rather than to the one implementation that happens to raise it. Raised
+#: below when a conditional append is refused, which a rolling deployment
+#: makes routine: `maxReplicas: 1` bounds a revision, not the app
+#: (WS10 SEC-H-01).
 
 
 class AppendBlobSink:
@@ -82,6 +92,10 @@ class AppendBlobSink:
         # safe across replicas — see the note in `head()`.
         self._lock = threading.Lock()
         self._created: set[str] = set()
+        #: Byte length this writer believes each day's blob has. The append is
+        #: conditional on it, which turns a concurrent second writer into a
+        #: refusal instead of a silent corruption.
+        self._offset: dict[str, int] = {}
 
     # ------------------------------------------------------------ plumbing
 
@@ -114,12 +128,31 @@ class AppendBlobSink:
                 if day not in self._created:
                     self._ensure_blob(client, url)
                     self._created.add(day)
+                headers = {**self._headers(), "Content-Length": str(len(line))}
+                expected = self._offset.get(day)
+                if expected is not None:
+                    # Optimistic concurrency. The service appends only if the
+                    # blob is exactly this long; anyone else's append moves it
+                    # and this one is refused with 412.
+                    headers["x-ms-blob-condition-appendpos"] = str(expected)
+
                 response = client.put(
                     url,
                     params={"comp": "appendblock"},
-                    headers={**self._headers(), "Content-Length": str(len(line))},
+                    headers=headers,
                     content=line,
                 )
+                if response.status_code == 412:
+                    # AppendPositionConditionNotMet. Another writer got there,
+                    # so this writer's head is stale and the record it built is
+                    # chained to the wrong predecessor. Drop the offset so the
+                    # next attempt re-learns it, and make the caller rebuild.
+                    self._offset.pop(day, None)
+                    raise StaleHead(
+                        "another writer appended to the audit trail since this "
+                        "process read the head — the record was NOT written, "
+                        "and will be rebuilt on the real predecessor"
+                    )
                 if response.status_code == 409:
                     # BlockCountExceeded, or the immutability policy refusing a
                     # non-append write. Either way the record is not stored,
@@ -135,6 +168,14 @@ class AppendBlobSink:
                         f"appending to {url} returned {response.status_code}: "
                         f"{response.text[:300]}"
                     )
+                # The service reports where this block landed. Trusting its
+                # arithmetic rather than ours means a miscount cannot silently
+                # disable the condition above.
+                landed = response.headers.get("x-ms-blob-append-offset")
+                if landed is not None:
+                    self._offset[day] = int(landed) + len(line)
+                else:
+                    self._offset.pop(day, None)
         except httpx.HTTPError as exc:
             raise BlobSinkError(f"the audit blob could not be reached: {exc}") from exc
         finally:

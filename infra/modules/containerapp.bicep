@@ -89,13 +89,19 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        // Exactly one, and it is not a cost decision.
+        // Exactly one, and it is not a cost decision. Sessions are
+        // in-process, so a second replica would serve an operator a request
+        // the replica holding their session never saw.
         //
-        // Sessions are in-process, so a second replica would serve an operator
-        // a request the replica holding their session never saw. And the audit
-        // chain's head is process state: two writers would each believe they
-        // held it, and the trail would fork into two chains that both verify
-        // and neither of which is the record.
+        // ⚠️ It is NOT what keeps the audit chain single-writer, and an earlier
+        // version of this comment claimed it was. `maxReplicas` bounds a
+        // REVISION: a rolling update starts the new replica and stops the old
+        // one only once the new one is healthy, so every deployment runs two
+        // writers for tens of seconds — measured at 46s and 37s here.
+        //
+        // The chain is protected in the sink instead, by a conditional append
+        // that refuses a write whose predecessor has moved, and by the trail
+        // rebuilding the record on the real head. See WS10 SEC-H-01.
         //
         // The consequence, documented rather than discovered: a revision update
         // signs every operator out. The UI detects the lost session and

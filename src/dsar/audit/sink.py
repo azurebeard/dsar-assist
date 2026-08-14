@@ -35,6 +35,7 @@ if TYPE_CHECKING:  # a runtime import here would be circular
 
 __all__ = [
     "AuditSink",
+    "StaleHead",
     "JsonlFileSink",
     "StderrSink",
     "MemorySink",
@@ -45,6 +46,18 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 audit_log = logging.getLogger("dsar.audit")
+
+
+class StaleHead(RuntimeError):
+    """Someone else appended since this writer last read the head.
+
+    Part of the sink *contract* rather than of any one implementation, because
+    it changes what a caller must do: the record was **not** written, and it
+    must be rebuilt on the real predecessor rather than retried as-is.
+
+    Only the remote sink can raise it. A file sink holds `O_APPEND` and a
+    process lock, and the desktop is one process by construction.
+    """
 
 
 class AuditSink(Protocol):
