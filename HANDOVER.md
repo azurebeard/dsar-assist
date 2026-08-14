@@ -69,7 +69,7 @@ anything that will not start.
 | 2 · Graph as source of truth | ✅ case list rebuilt from Graph — **nothing travels between machines** |
 | 3 · Audit trail | ✅ hash-chained, tamper-evident, no subject data |
 | 4 · Write path | ✅ create case → expand → review KQL → search → delta → export handoff |
-| 5 · Hosted | ✗ designed, unbuilt (B-03) — **start with the FIC spike** |
+| 5 · Hosted | ◑ **built and unproven** — code, Bicep and provisioning done; the live FIC exchange needs a deployment. See `docs/DEPLOY-hosted.md` |
 
 **239 tests, `mypy --strict` clean, CI green.** Multi-arch image (amd64 +
 arm64, built in CI), **distroless runtime** — no shell, no package manager, no
@@ -160,7 +160,7 @@ and 50 that afternoon. Re-run the pre-run on the day and quote what you get.
 |---|---|---|
 | **B-04** | **Prove CAE is negotiated** — `cp1` is declared, but whether the STS agreed is only readable from `xms_cc` on an issued token. **Until observed, do not claim near-real-time revocation** | 1 hour, one sign-in |
 | **B-05** | **CA03 decision.** Requiring a compliant device on the *desktop* app hard-blocks a container on an unmanaged Linux box, including this workstation. Recommendation: enforce for hosted, report-only for desktop | a decision |
-| **B-03** | Hosted mode — **start with the FIC spike**, it gates the rest | 2–3 days |
+| **B-03** | Hosted mode — built. **Blocked on one action of yours**: make the GHCR package public so Container Apps can pull without a registry secret. Then `docs/DEPLOY-hosted.md` runs end to end | 30 min |
 
 Branch protection is deliberately open (admin bypass) for development speed.
 
