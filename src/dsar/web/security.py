@@ -87,6 +87,8 @@ HSTS_HEADER = ("Strict-Transport-Security", "max-age=63072000; includeSubDomains
 ALLOWED_STATIC: dict[str, str] = {
     "/": "index.html",
     "/index.html": "index.html",
+    "/app.js": "app.js",
+    "/style.css": "style.css",
 }
 
 

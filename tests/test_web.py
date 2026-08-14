@@ -69,7 +69,31 @@ def test_index_is_served(client: TestClient) -> None:
 
 def test_unlisted_static_path_is_not_served(client: TestClient) -> None:
     """A file dropped into static/ is not served until someone names it."""
-    assert client.get("/style.css").status_code == 404
+    assert client.get("/not-registered.js").status_code == 404
+    assert client.get("/../config.json").status_code == 404
+
+
+def test_front_page_offers_sign_in(client: TestClient) -> None:
+    """The auth routes existed before anything linked to them, so the flow was
+    unreachable from the UI. That is a defect the tests did not catch, because
+    every test called /auth/login directly."""
+    body = client.get("/").text
+    assert "/auth/login" in body
+
+
+def test_front_page_assets_are_served(client: TestClient) -> None:
+    for path, marker in (("/app.js", "whoami"), ("/style.css", "--accent")):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert marker in response.text
+
+
+def test_no_inline_script_would_survive_the_csp(client: TestClient) -> None:
+    """script-src 'self' blocks inline handlers, so a page relying on one
+    breaks silently in the browser and passes every server-side test."""
+    body = client.get("/").text
+    assert "onclick=" not in body.lower()
+    assert "<script>" not in body.lower()
 
 
 def test_no_server_header_leak(client: TestClient) -> None:

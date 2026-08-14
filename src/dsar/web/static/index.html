@@ -4,18 +4,56 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DSAR Assist</title>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<main>
+<header>
   <h1>DSAR Assist</h1>
-  <p>
-    Control plane for Microsoft Purview eDiscovery. It has no data plane: it
-    never downloads, previews or stores item content.
-  </p>
-  <p>
-    Phase 0 skeleton. Sign-in lands in Phase 1, the case list in Phase 2.
-    Run <code>dsar doctor</code> to check this instance.
-  </p>
+  <div id="identity" class="identity" aria-live="polite">
+    <span class="muted">checking…</span>
+  </div>
+</header>
+
+<main>
+  <section id="signed-out" hidden>
+    <h2>Sign in</h2>
+    <p>
+      This tool acts entirely as you. It holds no credential of its own and
+      cannot see anything your own Purview permissions do not already allow.
+    </p>
+    <p><a class="button" href="/auth/login">Sign in with Microsoft</a></p>
+  </section>
+
+  <section id="signed-in" hidden>
+    <h2>Signed in</h2>
+    <dl class="facts">
+      <dt>Account</dt><dd id="fact-upn">—</dd>
+      <dt>Object ID</dt><dd id="fact-oid" class="mono">—</dd>
+      <dt>App roles</dt><dd id="fact-roles">—</dd>
+      <dt>Can create cases</dt><dd id="fact-write">—</dd>
+    </dl>
+    <p class="muted">
+      The case list arrives in the next phase. It is read from Microsoft Graph
+      rather than a local database, so it is the same on every machine you sign
+      in from.
+    </p>
+    <p><button id="signout" class="button secondary" type="button">Sign out</button></p>
+  </section>
+
+  <section id="error" hidden>
+    <h2>Something went wrong</h2>
+    <p id="error-detail" class="muted"></p>
+  </section>
+
+  <footer>
+    <p class="muted small">
+      No data plane. This tool never downloads, previews or stores item
+      content — exports are collected from the Microsoft Purview portal under
+      your own identity.
+    </p>
+  </footer>
 </main>
+
+<script src="/app.js"></script>
 </body>
 </html>
