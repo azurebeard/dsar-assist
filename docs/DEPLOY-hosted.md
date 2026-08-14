@@ -15,16 +15,33 @@ Container Apps is a **secret** — which contradicts `secrets: []`, the central
 claim of the hosted design and the thing `test_the_hosted_deployment_declares_
 no_secrets` asserts.
 
-Since the repository is going public anyway, the stop-gap is to take the
-*package* public now. The repository stays private until you choose otherwise.
+**There is no REST API for this.** GitHub's packages API supports list, get,
+delete and restore — there is no PATCH for visibility, and attempting one
+returns 404 on a URL where GET succeeds. It is a web UI action only.
+
+**A package's visibility is independent of its repository's.** Making the
+repository public does not make the package public; they are two settings in
+two places, and both pages have a "Danger Zone → Change visibility". That
+ambiguity has already cost one round trip here.
+
+Start from the package page, which the API gives you authoritatively:
 
 ```bash
-gh auth refresh -h github.com -s write:packages,read:packages
-gh api -X PATCH user/packages/container/dsar-assist -f visibility=public
+gh api user/packages/container/dsar-assist -q .html_url
+# https://github.com/users/azurebeard/packages/container/package/dsar-assist
 ```
 
-Or: **github.com/users/azurebeard/packages/container/dsar-assist/settings** →
-Danger Zone → Change visibility → Public.
+On that page — it shows the pull command and the version list, which is how you
+know it is the package and not the repository — use **Package settings** in the
+right-hand sidebar, then **Danger Zone → Change visibility → Public**.
+
+Verify with the only test that matters, which is what Container Apps does:
+
+```bash
+docker logout ghcr.io
+docker manifest inspect ghcr.io/azurebeard/dsar-assist:latest >/dev/null \
+  && echo "pullable" || echo "still private"
+```
 
 ### What that publishes, and what it does not
 
