@@ -27,6 +27,12 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute only wins while nothing else sets `display`. Any rule
+   like `.status { display: flex }` silently overrides it, which is how the
+   status bar painted as an empty pill on every view while its `hidden`
+   property read true. Screenshot work found it; users had been seeing it. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);

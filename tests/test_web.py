@@ -427,3 +427,13 @@ def test_completion_clears_the_status_rather_than_replacing_it(
     # the file, because the comment explaining the change names the string it
     # removed — the same way three earlier scans tripped over their own prose.
     assert 'status("' not in complete_branch
+
+
+def test_the_hidden_attribute_actually_hides(client: TestClient) -> None:
+    """`hidden` is a UA-stylesheet default, and it loses to any author rule
+    that sets `display`. `.status { display: flex }` did exactly that: the
+    status bar painted as an empty pill on every view while its `hidden`
+    property read true. Found by screenshotting, not by the suite, because
+    server-side tests read attributes and a browser paints computed style."""
+    css = client.get("/style.css").text
+    assert "[hidden] { display: none !important; }" in css

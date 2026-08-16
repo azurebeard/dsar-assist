@@ -41,6 +41,17 @@ operator's own identity. All of this is asserted by tests at every commit, and
 The operator signs in as themselves. The tool can see nothing their own
 Purview permissions do not already allow, and holds no credential of its own.
 
+![The request list, with the statutory deadline and days remaining per case. Overdue and due-soon rows are highlighted, and a case with no recorded receipt date says so.](docs/images/requests.png)
+
+The two queries are always shown before anything runs, side by side and
+editable:
+
+![The resolved identifiers and mentions, and the naive and expanded queries side by side, editable, with nothing yet run.](docs/images/two-queries.png)
+
+And once both estimates complete, the difference is stated plainly:
+
+![A case with both searches complete: the naive query found 40 items across 12 mailboxes and 1 site, the expanded query 61 items across 14 mailboxes and 3 sites, and the banner reads: the naive query missed 21 items, 53% more, and 4 locations it never looked at.](docs/images/case-delta.png)
+
 ---
 
 ## Install
