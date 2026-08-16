@@ -294,26 +294,55 @@ twice.
 
 ---
 
-## B-14 · B-04, and it is the pattern for the sixth time
+## B-14 / B-04 · CAE ✅ DONE 2026-08-16
 
-**Size:** ~30 minutes · **Closes:** B-04 permanently
+`xms_cc` is now read off the ID token at sign-in, exposed as
+`Principal.cae_negotiated`, and surfaced on `/api/whoami` and in the sign-in
+audit record. Every sign-in answers whether the STS agreed to `cp1`, rather
+than one manual observation being carried as fact.
 
-`msal_client.py` says: *"`doctor` reads `xms_cc` back off the issued token,
-because declaring a capability and having the STS agree are different things."*
+The comment claiming `doctor` did this was the entire implementation, and
+`doctor` could never have done it — it has no session and therefore no ID
+token. Sixth instance of the recurring defect, closed.
 
-`rg xms_cc src/` returns **that comment and nothing else**. Nothing reads it.
-A stated guarantee with no check behind it — the sixth instance, after
-SEC-H-02, the `innerHTML` rule, the pip guard, the replica assertion, and the
-credential assertion that covered one registration.
+**It still needs a real sign-in to report `True`.** The capability is read from
+whatever the STS issues, so the answer arrives the first time someone signs in
+to the hosted instance. Until it does, do not claim near-real-time revocation.
 
-It is not a `doctor` check: `doctor` has no session and therefore no ID token.
-It belongs in `claims.py`, beside the `uti` already captured — take `xms_cc`,
-surface it on `/api/whoami` and in the sign-in audit record. Then **the next
-sign-in answers it**, and every sign-in after that re-answers it, instead of
-one manual observation being carried as fact.
+---
 
-Until then: **do not claim near-real-time revocation.** `cp1` is declared and
-its negotiation is unobserved.
+## B-15 · Conditional Access — enforce, when the logs say so
+
+**All six policies are live in REPORT-ONLY**, created by
+`infra/entra/conditional-access.sh` and excluding the break-glass account.
+
+Leave them a fortnight, then read **Entra ID → Conditional Access → Insights
+and reporting**. The order to enforce in, easiest first: CA06 (device code —
+DSAR Assist never uses it), CA01 and CA04 (hosted only), then CA08 and CA09,
+which are tenant-wide and overlap policies that already enforce.
+
+### Two design corrections, discovered by Entra refusing them
+
+**CA03 cannot exist.** Conditional Access cannot target the desktop app at all
+— `PublicClientsAreUnsupported`. It was never a decision pending a fortnight
+of report-only; it is not buildable. The desktop path has
+`appRoleAssignmentRequired`, tenant-wide policy on the user, and Purview RBAC.
+
+**CA04 is sign-in frequency only.** `persistentBrowser` is refused on an
+app-scoped policy and needs a tenant-wide one, which is a bigger decision than
+this. A hosted browser session may persist across restarts; the 4-hour sign-in
+frequency and the app's own 8h/60m session are what bound it.
+
+### Still to do
+
+* **CA05** — the step-up context. The app side is built and tested; creating
+  the authentication context needs the portal, because the az CLI's Graph
+  token has no scope for it.
+* **CA10** — Purview portal controls. That is where the data plane lives.
+* **CA11** — egress named location, only if Container Apps egress is fixed.
+* ⚠️ The tenant's `[XDR Demo] Require MFA for all users` is **enabled** and
+  grants plain `mfa`. Until CA01 enforces, phishing-resistant MFA is not in
+  place for the DSAR apps, whatever the threat model would like to say.
 
 ---
 

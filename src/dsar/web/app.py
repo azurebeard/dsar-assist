@@ -114,6 +114,9 @@ async def whoami(request: Request) -> Response:
             "upn": principal.upn,
             "roles": sorted(principal.roles),
             "can_write": principal.can_write,
+            # Observed, not declared. B-14: the claim that this was read back
+            # existed for weeks with nothing reading it.
+            "cae_negotiated": principal.cae_negotiated,
         }
     )
 

@@ -125,6 +125,14 @@ def build_principal(
     if isinstance(acrs_raw, str):
         acrs_raw = [acrs_raw]
 
+    # `xms_cc` is what the STS agreed to, as opposed to what we asked for.
+    # It arrives as a list, and as a bare string on at least some paths — the
+    # same shape problem `acrs` and `amr` have above, handled the same way
+    # rather than assumed away.
+    capabilities_raw = id_token_claims.get("xms_cc") or []
+    if isinstance(capabilities_raw, str):
+        capabilities_raw = [capabilities_raw]
+
     amr_raw = id_token_claims.get("amr") or []
     if isinstance(amr_raw, str):
         amr_raw = [amr_raw]
@@ -144,5 +152,6 @@ def build_principal(
         amr=tuple(str(a) for a in amr_raw),
         auth_time=int(auth_time) if isinstance(auth_time, (int, float)) else None,
         uti=str(id_token_claims.get("uti", "")),
+        client_capabilities=frozenset(str(c) for c in capabilities_raw),
         login_hint=str(id_token_claims.get("login_hint", "")),
     )

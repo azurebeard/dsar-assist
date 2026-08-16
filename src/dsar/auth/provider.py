@@ -54,6 +54,25 @@ class Principal:
     #: record be joined back to the sign-in that produced it.
     uti: str = ""
     login_hint: str = ""
+    #: Client capabilities the STS **agreed** to, read from `xms_cc` on the ID
+    #: token. Declaring `cp1` is a promise this client will handle a claims
+    #: challenge; whether Entra accepted it is only visible here.
+    #:
+    #: `msal_client.py` claimed `doctor` read this back. Nothing did — the
+    #: comment was the whole implementation, and it was the sixth recorded
+    #: instance of a stated guarantee with no check behind it (B-04, B-14).
+    #: `doctor` could never have done it: it has no session and therefore no
+    #: ID token. It belongs here, where the token is.
+    client_capabilities: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def cae_negotiated(self) -> bool:
+        """Did the STS agree to Continuous Access Evaluation?
+
+        Until this is True on a real token, **do not claim near-real-time
+        revocation**. `cp1` being declared is a request, not an outcome.
+        """
+        return "cp1" in self.client_capabilities
 
     @property
     def key(self) -> tuple[str, str]:

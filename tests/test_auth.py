@@ -518,3 +518,46 @@ def test_logout_clears_the_cookie_in_hosted_mode_too(
         # Without this the browser discards the deletion entirely.
         assert "Secure" in cookie, cookie
         assert "Path=/" in cookie
+
+
+# ------------------------------------------------------- CAE, observed
+
+
+def test_cae_is_read_from_the_token_not_assumed(config_env) -> None:
+    """B-14, and the sixth instance of the recurring defect.
+
+    `msal_client.py` said "`doctor` reads `xms_cc` back off the issued token,
+    because declaring a capability and having the STS agree are different
+    things." `rg xms_cc src/` returned that comment and nothing else — the
+    comment was the entire implementation.
+
+    It could never have been a `doctor` check: `doctor` has no session and so
+    no ID token. It belongs where the token is.
+    """
+    from dsar.auth.claims import build_principal
+
+    agreed = build_principal(
+        {"oid": "o", "tid": TENANT, "xms_cc": ["cp1"]}, expected_tenant_id=TENANT
+    )
+    assert agreed.client_capabilities == frozenset({"cp1"})
+    assert agreed.cae_negotiated is True
+
+    # The STS declining is the case that matters: `cp1` was asked for and not
+    # granted, so near-real-time revocation must NOT be claimed.
+    declined = build_principal(
+        {"oid": "o", "tid": TENANT}, expected_tenant_id=TENANT
+    )
+    assert declined.client_capabilities == frozenset()
+    assert declined.cae_negotiated is False
+
+
+def test_a_bare_string_capability_is_handled(config_env) -> None:
+    """`acrs` and `amr` both arrive as a bare string on some paths and a list
+    on others. Assuming `xms_cc` is always a list would work in every test and
+    fail against whichever tenant sends the other shape."""
+    from dsar.auth.claims import build_principal
+
+    principal = build_principal(
+        {"oid": "o", "tid": TENANT, "xms_cc": "cp1"}, expected_tenant_id=TENANT
+    )
+    assert principal.cae_negotiated is True

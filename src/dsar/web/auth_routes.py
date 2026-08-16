@@ -250,7 +250,8 @@ async def callback(request: Request) -> Response:
         actor_upn=principal.upn,
         tenant_id=principal.tenant_id,
         uti=principal.uti,
-        detail=", ".join(sorted(principal.roles)) or "no DSAR role",
+        detail=(", ".join(sorted(principal.roles)) or "no DSAR role")
+        + (" · CAE" if principal.cae_negotiated else " · no CAE"),
     )
     log.info(
         "signed in: oid=%s roles=%s uti=%s",

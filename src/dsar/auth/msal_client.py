@@ -32,8 +32,14 @@ log = logging.getLogger(__name__)
 #: ones it cannot. The promise is kept at the single Graph choke point, which
 #: is the only place a 401 can arrive.
 #:
-#: `doctor` reads `xms_cc` back off the issued token, because declaring a
-#: capability and having the STS agree are different things.
+#: Declaring a capability and having the STS agree are different things, so
+#: `xms_cc` is read back off the ID token at sign-in and surfaced on
+#: `/api/whoami` and in the audit record — see `Principal.cae_negotiated`.
+#:
+#: This comment used to say `doctor` did that. Nothing did, and `doctor` never
+#: could: it has no session and therefore no ID token. The comment was the
+#: entire implementation for several weeks (B-04, B-14) and was the sixth
+#: recorded instance of a stated guarantee with no check behind it.
 CLIENT_CAPABILITIES = ["cp1"]
 
 
