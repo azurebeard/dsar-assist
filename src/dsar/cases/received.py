@@ -59,8 +59,19 @@ BOILERPLATE = (
 #: below, which is the check that actually decides.
 _MARKER_LINE = re.compile(
     rf"^\s*{re.escape(MARKER)}\s*(\d{{4}}-\d{{2}}-\d{{2}})\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    re.IGNORECASE,
 )
+
+#: Only the first line is examined. The marker is written there by design, and
+#: scanning the whole description with `re.MULTILINE` was quadratic in its
+#: length — 3ms at a thousand newlines, thirteen seconds at the request body
+#: cap, on every case in every list call (WS10 SEC-M-08).
+#:
+#: It also closes SEC-M-09: an operator-supplied description could otherwise
+#: contain its own `DSAR-Received:` line and set a deadline without passing
+#: `_received_date`, bypassing every bound that function enforces. A marker
+#: further down the description is now inert.
+_FIRST_LINE_CHARS = 64
 
 
 def encode_received(received: date | None, description: str = "") -> str:
@@ -70,6 +81,19 @@ def encode_received(received: date | None, description: str = "") -> str:
     nothing changes for a case created without one.
     """
     body = description.strip() or BOILERPLATE
+    # An operator-supplied description must not be able to carry its own
+    # marker: only `_received_date` may set a deadline, and only within the
+    # bounds it enforces (WS10 SEC-M-09). Reading the first line only makes a
+    # later marker inert; neutralising it here makes the intent visible in the
+    # stored value too.
+    # Prefixed with "> ", not indented. The pattern tolerates leading
+    # whitespace — deliberately, because it is read back out of a field a human
+    # edits — so indenting neutralises nothing, which the first version of this
+    # did and a test caught.
+    body = "\n".join(
+        ("> " + line if _MARKER_LINE.match(line[:_FIRST_LINE_CHARS]) else line)
+        for line in body.splitlines()
+    )
     if received is None:
         return body
     return f"{MARKER} {received.isoformat()}\n{body}"
@@ -84,7 +108,8 @@ def decode_received(description: str | None) -> date | None:
     """
     if not description:
         return None
-    match = _MARKER_LINE.search(description)
+    first_line = description.split("\n", 1)[0][:_FIRST_LINE_CHARS]
+    match = _MARKER_LINE.match(first_line)
     if match is None:
         return None
     try:

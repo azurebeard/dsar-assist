@@ -25,6 +25,17 @@ from dsar.config import Config, ConfigError, load_config
 from dsar.doctor.report import _wrap
 
 
+def _one_line(value: str) -> str:
+    """Flatten a caller-supplied value before printing it.
+
+    `detail` carries a search name, which reaches the trail from the request
+    body. Printed raw it can contain newlines and escape sequences and forge
+    a section heading in a document meant to be evidence (WS10 SEC-M-12).
+    """
+    flattened = " ".join(value.split())
+    return "".join(c for c in flattened if c.isprintable())
+
+
 def _para(text: str, width: int = 76) -> str:
     """`_wrap` returns lines. Printing the list prints its repr, which is what
     the first run of the evidence pack did."""
@@ -152,7 +163,19 @@ def run_evidence(case_id: str, *, as_json: bool = False) -> int:
 
 
 def _evidence_json(pack: EvidencePack, location: str) -> dict[str, Any]:
-    return {
+    """The same refusal the text output makes, in the machine-readable path.
+
+    It did not, and that was WS10 SEC-H-03 — the seventh instance of this
+    project's recurring defect, written in the same session as the register
+    built to catch it. `_print_evidence` returned early on a broken chain
+    while this serialised the extract regardless: nine events, the actors and
+    the subject pseudonym, out of a trail known to be tampered with.
+
+    The registered test asserted `pack.trustworthy is False`, which is a
+    dataclass property and not an output. Neither test called `as_json=True`.
+    A guarantee checked on the wrong side of the boundary it protects.
+    """
+    body: dict[str, Any] = {
         "case_id": pack.case_id,
         "reference": pack.reference,
         "source": location,
@@ -162,13 +185,26 @@ def _evidence_json(pack: EvidencePack, location: str) -> dict[str, Any]:
             "intact": pack.chain.intact,
             "breaks": [asdict(b) for b in pack.chain.breaks],
         },
-        "actors": list(pack.actors),
-        "subject_refs": list(pack.subject_refs),
-        "searches": [asdict(s) for s in pack.searches],
-        "events": [asdict(r) for r in pack.events],
-        "refusals": len(pack.refusals),
-        "unattributable_records": pack.unattributable,
     }
+    if not pack.trustworthy:
+        body["refused"] = (
+            "The audit trail does not verify, so no extract is presented. A "
+            "trail that has been altered cannot produce trustworthy evidence "
+            "about part of itself."
+        )
+        return body
+
+    body.update(
+        {
+            "actors": list(pack.actors),
+            "subject_refs": list(pack.subject_refs),
+            "searches": [asdict(s) for s in pack.searches],
+            "events": [asdict(r) for r in pack.events],
+            "refusals": len(pack.refusals),
+            "unattributable_records": pack.unattributable,
+        }
+    )
+    return body
 
 
 def _print_evidence(pack: EvidencePack, location: str) -> None:
@@ -247,7 +283,7 @@ def _print_evidence(pack: EvidencePack, location: str) -> None:
         print()
         for record in pack.refusals:
             who = record.actor_upn or record.actor_oid or "unknown"
-            print(f"  {record.ts[:19]}  {who}  {record.detail}")
+            print(f"  {record.ts[:19]}  {who}  {_one_line(record.detail)}")
 
     print()
     print("## Every recorded action")
@@ -255,7 +291,7 @@ def _print_evidence(pack: EvidencePack, location: str) -> None:
     for record in pack.events:
         line = f"  {record.ts[:19]}  seq={record.seq:<4} {record.action:<18} {record.outcome:<9}"
         if record.detail:
-            line += f"  {record.detail}"
+            line += f"  {_one_line(record.detail)}"
         print(line)
         if record.uti:
             print(f"{'':22}  token={record.uti}")

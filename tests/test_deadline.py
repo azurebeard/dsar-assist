@@ -246,11 +246,86 @@ def test_the_api_refuses_a_malformed_received_date() -> None:
     from dsar.cases.reference import InvalidReference
     from dsar.web.api import _received_date
 
-    assert _received_date("") is None
-    assert _received_date("2026-08-14") == date(2026, 8, 14)
-    for bad in ("14/08/2026", "yesterday", "2026-13-45"):
+    today = date(2026, 8, 16)
+    assert _received_date("", today) is None
+    assert _received_date("2026-08-14", today) == date(2026, 8, 14)
+
+    for bad in ("14/08/2026", "yesterday", "2026/08/14"):
         with pytest.raises(InvalidReference, match="YYYY-MM-DD"):
-            _received_date(bad)
+            _received_date(bad, today)
+
+    # Right shape, not a real day — a different message, because it is a
+    # different mistake and the operator fixes it differently.
+    for bad in ("2026-13-45", "2026-02-30"):
+        with pytest.raises(InvalidReference, match="not a real date"):
+            _received_date(bad, today)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "20260814",     # fromisoformat accepts it; the error promises it will not
+        "2026-W33-1",   # and this parses to 10 August — four days out, silently
+    ],
+)
+def test_a_format_the_error_message_disowns_is_refused(raw: str) -> None:
+    """WS10 SEC-M-10. `date.fromisoformat` is more generous than the message
+    that describes it, and the week form is the dangerous one: an operator
+    typing it gets a real date four days from the one they meant, with no
+    error and a statutory deadline to match."""
+    from dsar.cases.reference import InvalidReference
+    from dsar.web.api import _received_date
+
+    with pytest.raises(InvalidReference, match="YYYY-MM-DD"):
+        _received_date(raw, date(2026, 8, 16))
+
+
+def test_a_received_date_out_of_range_is_refused_before_it_can_break_the_list() -> None:
+    """WS10 SEC-H-05, and the impact is what makes it High.
+
+    `9999-12-31` parses, and one calendar month later is year 10000, which
+    `date()` refuses. That raised inside `_deadline_json`, which runs per case
+    in `_requests` — so one such case returned 500 for the request list, for
+    every operator, permanently, with no `update_case` to remove it.
+    """
+    from dsar.cases.reference import InvalidReference
+    from dsar.web.api import _received_date
+
+    today = date(2026, 8, 16)
+    with pytest.raises(InvalidReference, match="future"):
+        _received_date("9999-12-31", today)
+    with pytest.raises(InvalidReference, match="future"):
+        _received_date("2026-08-17", today)
+    with pytest.raises(InvalidReference, match="before the UK GDPR"):
+        _received_date("2018-05-24", today)
+
+    # And the boundaries themselves are accepted.
+    assert _received_date("2026-08-16", today) == today
+    assert _received_date("2018-05-25", today) == date(2018, 5, 25)
+
+
+def test_a_description_cannot_smuggle_its_own_marker() -> None:
+    """WS10 SEC-M-09. Only `_received_date` may set a deadline, and only inside
+    the bounds it enforces — an operator-supplied description carrying its own
+    marker line would bypass all of them."""
+    smuggled = encode_received(None, "DSAR-Received: 1999-01-01\nnotes")
+    assert decode_received(smuggled) is None
+
+    # And a real marker still wins when one was actually supplied.
+    both = encode_received(date(2026, 8, 14), "DSAR-Received: 1999-01-01")
+    assert decode_received(both) == date(2026, 8, 14)
+
+
+def test_the_marker_scan_does_not_walk_the_whole_description() -> None:
+    """WS10 SEC-M-08. Scanning with `re.MULTILINE` was quadratic in the
+    description's length — milliseconds at a thousand newlines, seconds at the
+    request body cap, on every case in every list call."""
+    import time
+
+    big = "DSAR-Received: 2026-08-14\n" + ("x" * 40 + "\n") * 20_000
+    start = time.perf_counter()
+    assert decode_received(big) == date(2026, 8, 14)
+    assert time.perf_counter() - start < 0.05
 
 
 def test_the_request_projection_carries_the_deadline() -> None:

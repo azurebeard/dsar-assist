@@ -21,6 +21,7 @@ returns 500 for all four wastes an afternoon.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Mapping
@@ -266,7 +267,22 @@ def _create_case(ctx: Context) -> ApiResult:
     }
 
 
-def _received_date(raw: str) -> date | None:
+#: The shape the error message promises. `date.fromisoformat` is more generous
+#: than that — it accepts `20260814` and `2026-W33-1`, and the week form parses
+#: to a DIFFERENT day than an operator typing it would expect (WS10 SEC-M-10).
+#: A statutory deadline silently four days out is worse than a refusal.
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: Nothing before the UK GDPR applied can be a live subject access request, and
+#: an upper bound is load-bearing: `date(9999, 12, 31)` parses, and one calendar
+#: month later is year 10000, which `date()` refuses — raising inside
+#: `_deadline_json`, which runs per case, so a single such case would 500 the
+#: request list for every operator with no `update_case` to remove it
+#: (WS10 SEC-H-05).
+_EARLIEST_RECEIVED = date(2018, 5, 25)
+
+
+def _received_date(raw: str, today: date | None = None) -> date | None:
     """Parse an operator-supplied receipt date, or refuse it.
 
     Empty is fine — the received date is optional and its absence shows as
@@ -276,13 +292,31 @@ def _received_date(raw: str) -> date | None:
     """
     if not raw:
         return None
-    try:
-        return date.fromisoformat(raw)
-    except ValueError as exc:
+    if not _ISO_DAY.match(raw):
         raise InvalidReference(
             f"the received date must be YYYY-MM-DD, got {raw!r}. The statutory "
             f"clock runs from the day the request arrived."
+        )
+    try:
+        received = date.fromisoformat(raw)
+    except ValueError as exc:
+        raise InvalidReference(
+            f"{raw!r} is not a real date. The statutory clock runs from the "
+            f"day the request arrived."
         ) from exc
+
+    now = today or datetime.now(timezone.utc).date()
+    if received > now:
+        raise InvalidReference(
+            f"the received date is in the future ({raw}). A request cannot "
+            f"arrive after today, and the deadline runs from receipt."
+        )
+    if received < _EARLIEST_RECEIVED:
+        raise InvalidReference(
+            f"the received date is before the UK GDPR applied ({raw}). If that "
+            f"is genuinely right, record it on the case in Purview instead."
+        )
+    return received
 
 
 def _expand(ctx: Context) -> ApiResult:

@@ -16,6 +16,13 @@ with no check behind it**, and there have been six:
 | 4 | The Bicep said one replica gave the audit chain a single writer | `maxReplicas` bounds a *revision*. Every deploy ran two writers (SEC-H-01) |
 | 5 | *"Both registrations hold zero credentials, asserted mechanically"* | Asserted for one, and the one it skipped was internet-facing (SEC-M-01) |
 | 6 | `msal_client.py` says `doctor` reads `xms_cc` back off the token | `rg xms_cc src/` returns that comment and nothing else. **Still open** |
+| 7 | INV-68 below: *"a tampered trail yields no trustworthy extract"* | True of the text output. `--json` emitted the whole extract anyway, and the test checked a dataclass property rather than an output (SEC-H-03) |
+
+The seventh was written **in the same session as this register**, by the person
+writing it. That is the point rather than an embarrassment: the defect is not
+carelessness, it is that a check written beside a claim tends to test the thing
+that was easy to reach rather than the thing the claim is about. INV-68's test
+asked the object; the guarantee lives in what leaves the process.
 
 Every one was found by accident — by deploying, by scanning, by trying to read
 something. None was found by the thing that claimed to be checking it.
@@ -99,6 +106,12 @@ whose table was never rebuilt. This is that table.
 | INV-67 | The evidence pack verifies the whole chain, never a subset | `audit/evidence.py` | `test_it_verifies_the_whole_chain_not_the_extract` | test |
 | INV-68 | A tampered trail yields no trustworthy extract | `audit/evidence.py` | `test_a_tampered_trail_yields_no_trustworthy_extract` | test |
 | INV-69 | The evidence pack carries no subject data | `audit/evidence.py` | `test_the_pack_never_carries_subject_data` | test |
+| INV-70 | The refusal holds on **every** output path, not only the text one | SEC-H-03 | `test_the_json_output_refuses_a_tampered_trail_too` | test |
+| INV-71 | Two searches sharing a name are two rows, never one merged row | SEC-H-04 | `test_two_searches_with_one_name_do_not_merge` | test |
+| INV-72 | A received date cannot be out of range, in the future, or in a format the error disowns | SEC-H-05, SEC-M-10 | `test_a_received_date_out_of_range_is_refused_before_it_can_break_the_list` | test |
+| INV-73 | A description cannot smuggle its own received-date marker | SEC-M-09 | `test_a_description_cannot_smuggle_its_own_marker` | test |
+| INV-74 | The marker scan does not walk the whole description | SEC-M-08 | `test_the_marker_scan_does_not_walk_the_whole_description` | test |
+| INV-75 | A malformed register row cannot be silently ignored | SEC-M-13 | `test_the_register_covers_the_claims_it_says_it_does` | test |
 
 ## The container and the deployment
 

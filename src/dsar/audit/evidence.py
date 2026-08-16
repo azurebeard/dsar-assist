@@ -179,58 +179,77 @@ def _unattributable(records: list[AuditRecord], mine: list[AuditRecord]) -> int:
 def _searches(events: list[AuditRecord]) -> tuple[SearchRecord, ...]:
     """Reassemble each search from the records that mention it.
 
-    Keyed on the search NAME, because that is the only value common to the
-    attempted and successful creation — the attempt happens before Purview has
-    assigned an id. Two searches with the same name in one case would merge;
-    the tool names them "Naive" and "Expanded", so that is a documented limit
-    rather than an unnoticed one.
+    Walked in sequence order and matched to the OPEN entry for a name, rather
+    than to a single entry per name (WS10 SEC-H-04). Two searches sharing a
+    name previously merged into one row that kept the second's creation time
+    and the first's export time — an export timestamped before the search it
+    exported, with one search id silently gone. In a document meant to be
+    evidence that is not a cosmetic defect.
+
+    The old defence — "the tool names them Naive and Expanded" — failed twice
+    over: those names are constants, so re-running the workflow on one case
+    collides on the ordinary path, and `/api/search/create` takes the name
+    from the request body without constraining it.
+
+    An entry closes when its creation succeeds and it has been exported, or
+    when a new attempt appears for the same name. Records that arrive for a
+    name with no open entry start one, so a trail that begins mid-case still
+    reports what it can see.
     """
-    by_name: dict[str, dict[str, object]] = {}
+    entries: list[dict[str, object]] = []
+    open_for_name: dict[str, dict[str, object]] = {}
+    by_search_id: dict[str, dict[str, object]] = {}
 
-    def slot(name: str) -> dict[str, object]:
-        return by_name.setdefault(
-            name,
-            {"search_id": "", "created_at": "", "estimate": "", "export": "",
-             "attempted": False, "created": False},
-        )
+    def start(name: str) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "name": name, "search_id": "", "created_at": "",
+            "estimate": "", "export": "", "attempted": False, "created": False,
+        }
+        entries.append(entry)
+        open_for_name[name] = entry
+        return entry
 
-    # Ids seen for a search, so estimate and export records — which carry the
-    # id and not the name — can be attributed back to it.
-    name_for_id: dict[str, str] = {}
-
-    for record in events:
-        # A refusal carries the ACTION DESCRIPTION in `detail` ("Creating a
-        # search"), not a search name — the first run of this listed it as a
-        # search called "Creating a search". Refusals are reported separately.
+    for record in sorted(events, key=lambda r: r.seq):
+        # A refusal carries the action DESCRIPTION in `detail`, not a search
+        # name — it is reported separately.
         if record.outcome == Outcome.DENIED.value:
             continue
+
         if record.action == Action.SEARCH_CREATED.value and record.detail:
-            entry = slot(record.detail)
+            name = record.detail
             if record.outcome == Outcome.ATTEMPTED.value:
-                entry["attempted"] = True
+                # A fresh attempt always starts a new search, even for a name
+                # already seen. That is what makes a re-run two rows.
+                start(name)["attempted"] = True
             elif record.outcome == Outcome.OK.value:
+                entry = open_for_name.get(name) or start(name)
                 entry["created"] = True
                 entry["search_id"] = record.target_id
                 entry["created_at"] = record.ts
                 if record.target_id:
-                    name_for_id[record.target_id] = record.detail
+                    by_search_id[record.target_id] = entry
+
         elif record.action == Action.ESTIMATE_STARTED.value:
-            name = name_for_id.get(record.target_id)
-            if name:
-                slot(name)["estimate"] = record.ts
+            found = by_search_id.get(record.target_id)
+            if found is not None:
+                found["estimate"] = record.ts
+
         elif record.action == Action.EXPORT_INITIATED.value:
-            name = name_for_id.get(record.target_id) or record.detail
-            if name:
-                slot(name)["export"] = record.ts
+            # Attributed by search id, never by name — the id is exact and a
+            # name is not. An export whose search is not in this extract is
+            # dropped rather than attached to the wrong row.
+            found = by_search_id.get(record.target_id)
+            if found is not None:
+                found["export"] = record.ts
 
     return tuple(
         SearchRecord(
-            name=name,
+            name=str(entry["name"]),
             search_id=str(entry["search_id"]),
             created_at=str(entry["created_at"]),
             estimate_started_at=str(entry["estimate"]),
             export_initiated_at=str(entry["export"]),
             incomplete=bool(entry["attempted"]) and not bool(entry["created"]),
         )
-        for name, entry in by_name.items()
+        for entry in entries
     )

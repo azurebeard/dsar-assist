@@ -25,8 +25,15 @@ from conftest import REPO_ROOT
 CLAIMS = REPO_ROOT / "docs" / "CLAIMS.md"
 
 #: A register row: `| INV-nn | claim | stated in | enforced by | kind |`.
+#:
+#: The kind is matched case-insensitively. It was `[a-z-]+`, which silently
+#: dropped the three rows whose kind is `CI` — so INV-31, INV-40 and INV-41
+#: were invisible to every check in this file, including the one asserting
+#: their named enforcement exists. Found by the row-count assertion added for
+#: WS10 SEC-M-13, on its first run.
 _ROW = re.compile(
-    r"^\|\s*(INV-\d+)\s*\|(.+?)\|(.+?)\|(.+?)\|\s*([a-z-]+)\s*\|\s*$", re.MULTILINE
+    r"^\|\s*(INV-\d+)\s*\|(.+?)\|(.+?)\|(.+?)\|\s*([A-Za-z-]+)\s*\|\s*$",
+    re.MULTILINE,
 )
 
 #: `test_name` in backticks, so prose in the same cell is ignored.
@@ -34,9 +41,25 @@ _TEST_NAME = re.compile(r"`(test_[a-z0-9_]+)`")
 
 
 def _rows() -> list[tuple[str, str, str, str, str]]:
+    """Every register row, with the count checked against the file.
+
+    WS10 SEC-M-13: this parsed with a regex and asserted only that it found
+    *something*. A row whose shape broke — a stray pipe, a missing column —
+    silently dropped out and every test still passed, so the register could be
+    wrong in exactly the way it exists to prevent.
+
+    Counting `| INV-` line starts separately is the fix: the parse and the file
+    must agree on how many claims there are.
+    """
     text = CLAIMS.read_text(encoding="utf-8")
     rows = [tuple(part.strip() for part in match.groups()) for match in _ROW.finditer(text)]
     assert rows, "no rows parsed out of docs/CLAIMS.md — has the table shape changed?"
+
+    declared = len(re.findall(r"^\|\s*INV-\d+\s*\|", text, re.MULTILINE))
+    assert len(rows) == declared, (
+        f"{declared} rows start with an INV number but only {len(rows)} parsed "
+        f"— a malformed row is being silently ignored"
+    )
     return rows  # type: ignore[return-value]
 
 
@@ -94,7 +117,7 @@ def test_an_open_claim_names_a_real_backlog_item() -> None:
     backlog = (REPO_ROOT / "docs" / "BACKLOG.md").read_text(encoding="utf-8")
     dangling: list[str] = []
     for inv, _claim, _stated, enforced, kind in _rows():
-        if kind != "open":
+        if kind.lower() != "open":
             continue
         items = re.findall(r"\bB-\d+\b", enforced)
         if not items:
@@ -152,4 +175,41 @@ def test_every_structural_test_is_registered() -> None:
     unregistered = sorted(structural - registered)
     assert unregistered == [], (
         f"structural tests with no row in docs/CLAIMS.md: {unregistered}"
+    )
+
+
+def test_the_register_covers_the_claims_it_says_it_does() -> None:
+    """A register that shrinks quietly is worse than none.
+
+    WS10 mutated `CLAIMS.md` four ways — de-shaped a row, deleted one, pointed
+    one at an unrelated real test, invented a claim — and all four passed. The
+    row-count check in `_rows` closes the first two. This closes the "shrank"
+    case from the other direction by pinning a floor, so deleting rows to make
+    a failure go away is itself a failure.
+
+    The floor is deliberately below the current count: rows are expected to be
+    added, and a test that must be edited on every addition is a test people
+    learn to edit.
+    """
+    rows = _rows()
+    assert len(rows) >= 60, (
+        f"the register has shrunk to {len(rows)} rows. Claims are not removed "
+        f"because they became inconvenient; if one no longer applies, say so "
+        f"in the row rather than deleting it."
+    )
+
+
+def test_every_enforcing_test_is_named_by_at_most_one_claim() -> None:
+    """Two claims pointing at one test usually means the second is not really
+    enforced — it is riding on a check written for something else."""
+    from collections import Counter
+
+    cited: Counter[str] = Counter()
+    for inv, _claim, _stated, enforced, _kind in _rows():
+        for name in set(_TEST_NAME.findall(enforced)):
+            cited[name] += 1
+    shared = {name: n for name, n in cited.items() if n > 1}
+    assert shared == {}, (
+        f"tests named by more than one claim: {shared}. Each is doing work for "
+        f"a claim it may not actually cover."
     )

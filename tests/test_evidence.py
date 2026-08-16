@@ -212,3 +212,70 @@ def test_a_missing_case_id_is_refused() -> None:
     from dsar.audit.report import run_evidence
 
     assert run_evidence("") == 2
+
+
+def test_the_json_output_refuses_a_tampered_trail_too(trail) -> None:  # type: ignore[no-untyped-def]
+    """WS10 SEC-H-03 — the seventh instance, and mine.
+
+    `_print_evidence` returned early on a broken chain. `_evidence_json`
+    serialised the extract regardless: nine events, the actors and the subject
+    pseudonym out of a trail known to be tampered with.
+
+    INV-68 asserted this guarantee and its test checked `pack.trustworthy is
+    False` — a dataclass property, not an output. Neither registered test
+    called `as_json=True`. A guarantee checked on the wrong side of the
+    boundary it protects, written in the same session as the register built to
+    catch exactly that.
+    """
+    from dsar.audit.report import _evidence_json
+
+    audit, sink = trail
+    _seed(audit)
+
+    intact = _evidence_json(_pack(sink), "somewhere")
+    assert intact["trustworthy"] is True
+    assert intact["events"], "an intact trail should still produce an extract"
+
+    sink.records = [r for r in sink.records if r.outcome != Outcome.DENIED.value]
+    refused = _evidence_json(_pack(sink), "somewhere")
+
+    assert refused["trustworthy"] is False
+    assert "refused" in refused
+    for leaked in ("events", "actors", "subject_refs", "searches"):
+        assert leaked not in refused, f"{leaked} emitted from a tampered trail"
+
+
+def test_two_searches_with_one_name_do_not_merge(trail) -> None:  # type: ignore[no-untyped-def]
+    """WS10 SEC-H-04. Keyed on name, two searches called `Expanded` merged into
+    one row holding the second's creation time and the first's export time — an
+    export timestamped before the search it exported, with one id gone.
+
+    The old defence was that the tool names them `Naive` and `Expanded`. Those
+    are constants, so re-running the workflow on one case collides on the
+    ordinary path — and `/api/search/create` takes the name from the request
+    body without constraining it.
+    """
+    audit, sink = trail
+    audit.write(Action.CASE_CREATED, Outcome.OK, case_id="c", target_id="c",
+                detail="DSAR-1")
+    for search_id in ("search-a", "search-b"):
+        audit.write(Action.SEARCH_CREATED, Outcome.ATTEMPTED, case_id="c",
+                    detail="Expanded")
+        audit.write(Action.SEARCH_CREATED, Outcome.OK, case_id="c",
+                    target_id=search_id, detail="Expanded")
+        audit.write(Action.ESTIMATE_STARTED, Outcome.OK, case_id="c",
+                    target_id=search_id)
+    audit.write(Action.EXPORT_INITIATED, Outcome.OK, case_id="c",
+                target_id="search-a", detail="Expanded")
+
+    searches = _pack(sink, "c").searches
+    assert len(searches) == 2, f"merged into {len(searches)} row(s)"
+    assert {s.search_id for s in searches} == {"search-a", "search-b"}
+
+    exported = [s for s in searches if s.export_initiated_at]
+    assert len(exported) == 1
+    assert exported[0].search_id == "search-a", "the export moved to the wrong search"
+    # And no row claims an export that predates its own creation.
+    for s in searches:
+        if s.export_initiated_at:
+            assert s.export_initiated_at >= s.created_at
