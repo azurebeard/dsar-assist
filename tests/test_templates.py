@@ -67,12 +67,14 @@ def test_a_mailbox_only_template_also_carries_the_caution_in_prose(
 
 def test_mailbox_only_defaults_to_false(tmp_path: Path) -> None:
     definition = {
+        "version": "0.0.1",
         "templates": [
             {
                 "id": "plain",
                 "name": "Plain",
                 "purpose": "p",
                 "builder": "phrase_or",
+                "verified": "unverified",
                 "fixed_terms": ["grievance"],
                 "inputs": [],
             }
@@ -97,11 +99,15 @@ def test_a_duplicate_id_is_refused(tmp_path: Path) -> None:
         "name": "D",
         "purpose": "p",
         "builder": "phrase_or",
+        "verified": "unverified",
         "fixed_terms": ["x"],
         "inputs": [],
     }
     path = tmp_path / "t.json"
-    path.write_text(json.dumps({"templates": [entry, entry]}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"version": "0.0.1", "templates": [entry, entry]}),
+        encoding="utf-8",
+    )
     with pytest.raises(TemplateError, match="duplicate"):
         load_templates(path)
 
@@ -111,6 +117,7 @@ def test_an_unknown_builder_is_refused(tmp_path: Path) -> None:
     path.write_text(
         json.dumps(
             {
+                "version": "0.0.1",
                 "templates": [
                     {
                         "id": "x",
@@ -119,12 +126,68 @@ def test_an_unknown_builder_is_refused(tmp_path: Path) -> None:
                         "builder": "sql",
                         "inputs": [],
                     }
-                ]
+                ],
             }
         ),
         encoding="utf-8",
     )
     with pytest.raises(TemplateError, match="unknown builder"):
+        load_templates(path)
+
+
+def test_the_template_file_version_is_required_and_read(tmp_path: Path) -> None:
+    """DSA-D01. The file carried `version: "1.0.0"` from the start and nothing
+    read it — an unread field is an optional field whatever the schema says,
+    which is how `attachments` shipped without a `verified` date. The version
+    is consumed now because every template application is stamped into the
+    audit trail as `id @ version`, and a version that can silently be absent
+    would stamp records with nothing."""
+    from dsar.identity.templates import templates_version
+
+    assert templates_version()  # the shipped file has one, and it is read
+
+    entry = {
+        "id": "plain",
+        "name": "P",
+        "purpose": "p",
+        "builder": "phrase_or",
+        "verified": "unverified",
+        "fixed_terms": ["x"],
+        "inputs": [],
+    }
+    unversioned = tmp_path / "t.json"
+    unversioned.write_text(json.dumps({"templates": [entry]}), encoding="utf-8")
+    with pytest.raises(TemplateError, match="version"):
+        load_templates(unversioned)
+    with pytest.raises(TemplateError, match="version"):
+        templates_version(unversioned)
+
+
+def test_a_template_without_a_verified_date_is_refused(tmp_path: Path) -> None:
+    """`verified` records when the rendered KQL was last run against a real
+    tenant. It was optional, and exactly one template shipped without it. A
+    template that has not been run says `"unverified"` — visible honesty —
+    rather than omitting the field or fabricating a date."""
+    path = tmp_path / "t.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "0.0.1",
+                "templates": [
+                    {
+                        "id": "x",
+                        "name": "X",
+                        "purpose": "p",
+                        "builder": "phrase_or",
+                        "fixed_terms": ["x"],
+                        "inputs": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(TemplateError, match="verified"):
         load_templates(path)
 
 

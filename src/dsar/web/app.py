@@ -117,6 +117,15 @@ async def whoami(request: Request) -> Response:
             # Observed, not declared. B-14: the claim that this was read back
             # existed for weeks with nothing reading it.
             "cae_negotiated": principal.cae_negotiated,
+            # INV-30, observed the same way. Always False on a session that
+            # exists at all — a granted download scope refuses the sign-in —
+            # but stating it from the token response keeps the claim a
+            # measurement rather than a comment.
+            "download_scope_granted": principal.download_scope_granted,
+            # Opt-in timing capture (DSA-A02). The client posts a summary only
+            # when this is true, so a disabled server sees no metrics traffic
+            # at all rather than traffic it drops.
+            "metrics_enabled": request.app.state.auth.config.metrics,
         }
     )
 

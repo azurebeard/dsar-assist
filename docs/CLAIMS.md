@@ -50,7 +50,7 @@ whose table was never rebuilt. This is that table.
 | INV-04 | Eleven operations, and adding one is a visible diff | `graph/operations.py` | `test_operations_table_is_the_documented_set` | test |
 | INV-05 | Every request path comes from the table, never from an argument | `graph/operations.py` | `test_no_graph_path_is_caller_supplied` | test |
 | INV-06 | A crafted identifier cannot reach an endpoint outside the table | `graph/operations.py` | `test_path_segments_cannot_escape_the_operations_table` | test |
-| INV-30 | The issued token carries no download scope | `README.md` | `doctor` — "no data plane" check | runtime |
+| INV-30 | The granted scopes carry nothing download-capable, checked at every sign-in from the token response, and a violation refuses the sign-in | `README.md`, `auth/claims.py` | `test_a_download_scope_in_the_token_response_refuses_sign_in` | test |
 
 ## Dependencies and packaging
 
@@ -101,6 +101,9 @@ whose table was never rebuilt. This is that table.
 | INV-73 | A description cannot smuggle its own received-date marker | `cases/received.py` | `test_a_description_cannot_smuggle_its_own_marker` | test |
 | INV-74 | The marker scan does not walk the whole description | `cases/received.py` | `test_the_marker_scan_does_not_walk_the_whole_description` | test |
 | INV-75 | A malformed register row cannot be silently ignored | `tests/test_claims_register.py` | `test_the_register_covers_the_claims_it_says_it_does` | test |
+| INV-78 | A template application is recorded as `id @ file version` — never the query, never the values | `TEMPLATES.md`, `cases/workflow.py` | `test_a_template_application_is_recorded_with_id_and_version` | test |
+| INV-84 | A client-supplied case or search id is shape-bounded before any record can carry it | `web/api.py` | `test_a_free_text_case_id_cannot_ride_into_the_trail` | test |
+| INV-79 | The template file's version is required and read, and a template without a `verified` date is refused | `TEMPLATES.md`, `identity/templates.py` | `test_the_template_file_version_is_required_and_read`, `test_a_template_without_a_verified_date_is_refused` | test |
 
 ## The container and the deployment
 
@@ -142,16 +145,25 @@ whose table was never rebuilt. This is that table.
 | INV-55 | A request body is capped | `THREAT-MODEL.md` | `test_a_request_body_is_capped` | test |
 | INV-56 | The delta is only the expansion's contribution, or the interface says so | `THREAT-MODEL.md` | `test_the_delta_says_when_it_has_stopped_meaning_what_it_looks_like` | test |
 | INV-57 | A status cannot land on a page the operator has left | — | `test_a_status_cannot_land_on_a_page_the_operator_left` | test |
+| INV-80 | The front end cannot post a key the server silently discards | `web/static/app.js` | `test_the_expand_payload_keys_are_ones_the_server_reads` | test |
 
 ## Correctness with compliance consequences
 
 | # | Claim | Stated in | Enforced by | Kind |
 |---|---|---|---|---|
-| INV-58 | The statutory deadline is one calendar month, not thirty days | `cases/deadline.py` | `test_one_calendar_month`, `test_it_is_not_thirty_days` | test |
+| INV-58 | The statutory deadline is one calendar month, not thirty days. It is the baseline only: extensions and clock pauses are not modelled, and the interface says so | `cases/deadline.py`, `web/static/index.html` | `test_one_calendar_month`, `test_it_is_not_thirty_days`, `test_the_interface_states_the_clock_is_the_baseline` | test |
 | INV-59 | A deadline is never derived from the case creation date | `cases/received.py` | `test_a_case_without_a_marker_has_no_deadline` | test |
 | INV-60 | The statutory arithmetic is pure and clock-free | `cases/deadline.py` | `test_the_statutory_arithmetic_is_pure` | test |
 | INV-61 | Every query builder is documented, and every documented builder exists | `TEMPLATES.md` | `test_every_builder_is_documented`, `test_every_documented_builder_exists` | test |
 | INV-62 | A value that cannot be expressed in KQL is refused, never escaped | `TEMPLATES.md`, `THREAT-MODEL.md` | `test_a_term_that_cannot_be_quoted_is_refused_not_escaped` | test |
+
+## The metrics store (opt-in telemetry)
+
+| # | Claim | Stated in | Enforced by | Kind |
+|---|---|---|---|---|
+| INV-81 | The metrics package cannot import the modules subject data lives in | `metrics/store.py` | `test_the_metrics_package_cannot_import_subject_bearing_modules` | test |
+| INV-82 | Metrics capture is off by default, and a disabled endpoint refuses and writes nothing | `metrics/store.py`, `README.md` | `test_capture_is_off_by_default_and_the_endpoint_refuses` | test |
+| INV-83 | A metrics event is bounded integers under allowlisted names, and one stray field refuses the whole event | `metrics/store.py`, `BENCHMARK.md` | `test_an_unknown_field_refuses_the_whole_event`, `test_a_string_value_is_refused_even_under_an_allowed_name` | test |
 
 ## The repository
 
@@ -160,6 +172,7 @@ whose table was never rebuilt. This is that table.
 | INV-10 | No test reaches the network | `tests/conftest.py`, `expand.py:132` | `conftest.py` — autouse socket guard | test-harness |
 | INV-63 | No real tenant identifier is committed | working notes | `test_no_tenant_specific_identifier_is_committed` | test |
 | INV-76 | `dsar init` writes a config the loader accepts, owner-only, and refuses one that cannot work | `init_cmd.py` | `test_init_writes_a_config_the_loader_accepts` | test |
+| INV-77 | The README install is pinned to the released version, and the container image by digest | `README.md` | `test_the_readme_pins_the_current_release` | test |
 
 ---
 

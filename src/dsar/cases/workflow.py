@@ -198,6 +198,27 @@ class Workflow:
         )
         return expansion
 
+    # ------------------------------------------------------------- templates
+
+    def record_template_applied(
+        self, template_id: str, version: str, case_id: str = ""
+    ) -> None:
+        """A reviewed narrowing was rendered onto a query. Write it down.
+
+        The render itself is local — no Graph call — but the search that
+        eventually runs is recorded name-only, so this record is the only way
+        the trail can say which reviewed narrowing shaped it, and at which
+        version of the template file. The id and version are the whole
+        payload: never the query, never the operator's input values, which
+        carry exactly the subject data the trail must not hold.
+        """
+        self._record(
+            Action.TEMPLATE_APPLIED,
+            Outcome.OK,
+            case_id=case_id,
+            detail=f"{template_id} @ {version}",
+        )
+
     # -------------------------------------------------------------- searches
 
     def create_search(self, case_id: str, name: str, query: str) -> Search:

@@ -355,3 +355,28 @@ def test_a_failing_operations_call_does_not_become_an_error() -> None:
 
     search = CaseService(Broken([])).statistics_for("case", "s")  # type: ignore[arg-type]
     assert search.statistics.item_count is None
+
+
+def test_the_expansion_json_names_former_names_and_employee_id() -> None:
+    """DSA-B03. The interface groups the preview by provenance, which needs
+    two facts the JSON did not carry: which mentions are former names, and
+    that the employee id was used to match the directory record rather than
+    searched. A chip that looks searched and is not would misstate the
+    query's coverage, so the JSON states which is which."""
+    from dsar.identity.expand import DirectoryResolver, Subject, expand_subject
+
+    subject = Subject(
+        primary_email="jordan.hale@example.test",
+        display_name="Jordan Hale",
+        aliases=("Jay",),
+        former_names=("Jordan Price",),
+        employee_id="E-2214",
+    )
+    data = expand_subject(subject, DirectoryResolver([])).to_json()
+
+    assert data["former_names"] == ["Jordan Price"]
+    # Still inside mentions for the query; the separate key is for labelling.
+    assert "Jordan Price" in data["mentions"]
+    # Matched against the directory, never searched.
+    assert data["employee_id"] == "E-2214"
+    assert "E-2214" not in data["kql"]

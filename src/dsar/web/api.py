@@ -46,7 +46,11 @@ from dsar.identity.templates import (
     TemplateError,
     load_templates,
     render_template,
+    templates_version,
 )
+from dsar.metrics.store import MetricsError
+from dsar.metrics.store import record as metrics_record
+from dsar.metrics.store import validate as metrics_validate
 
 __all__ = ["handle", "ApiResult", "API_ENDPOINTS"]
 
@@ -244,6 +248,10 @@ def _statistics(ctx: Context) -> ApiResult:
             "error": "invalid_input",
             "message": "case_id and search_id are required",
         }
+    if not _IDENTIFIER.match(case_id):
+        return _malformed_id("case_id")
+    if not _IDENTIFIER.match(search_id):
+        return _malformed_id("search_id")
     return 200, _search_json(ctx.cases.statistics_for(case_id, search_id))
 
 
@@ -319,6 +327,24 @@ def _received_date(raw: str, today: date | None = None) -> date | None:
     return received
 
 
+#: Identifier-shaped, as Purview case and search ids actually are (GUIDs).
+#: The bound exists for the audit trail, not for Graph: several workflow
+#: methods write an ATTEMPTED or TEMPLATE_APPLIED record carrying a
+#: client-supplied id BEFORE any Graph call could refuse it, and the trail is
+#: append-only — in hosted mode under an immutability policy. Free text — a
+#: name, an address, a query — must not be able to ride an identifier field
+#: into a record nobody can erase (WS10 SEC-M-01).
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+
+
+def _malformed_id(name: str) -> ApiResult:
+    return 400, {
+        "error": "invalid_input",
+        "message": f"{name} must be an identifier: letters, digits and "
+        "hyphens, at most 64 characters",
+    }
+
+
 def _expand(ctx: Context) -> ApiResult:
     """Resolve the subject and return BOTH queries for review.
 
@@ -329,11 +355,14 @@ def _expand(ctx: Context) -> ApiResult:
     Nothing is submitted here. The operator sees the query, and may edit it,
     before any search exists.
     """
+    case_id = ctx.text("case_id")
+    if case_id and not _IDENTIFIER.match(case_id):
+        return _malformed_id("case_id")
     subject = build_subject(dict(ctx.body))
     expansion = ctx.workflow.expand(
         subject,
         identity_expansion=ctx.config.identity_expansion,
-        case_id=ctx.text("case_id"),
+        case_id=case_id,
     )
     return 200, expansion.to_json()
 
@@ -344,11 +373,22 @@ def _apply_template(ctx: Context) -> ApiResult:
     if not query:
         return 400, {"error": "invalid_input", "message": "query is required"}
 
+    case_id = ctx.text("case_id")
+    if case_id and not _IDENTIFIER.match(case_id):
+        return _malformed_id("case_id")
+
     template_id = ctx.text("template_id")
     template = _find_template(template_id)
     values = ctx.body.get("values")
     narrowed = render_template(
         template, values if isinstance(values, dict) else {}, existing=query
+    )
+    # Recorded after the render succeeds: the trail states which reviewed
+    # narrowing shaped the search, at which template-file version — the one
+    # fact about the query the trail is allowed to hold. A refused render
+    # changed nothing and records nothing.
+    ctx.workflow.record_template_applied(
+        template.id, templates_version(), case_id=case_id
     )
     return 200, {"query": narrowed}
 
@@ -373,6 +413,10 @@ def _create_search(ctx: Context) -> ApiResult:
             "error": "invalid_input",
             "message": "case_id and query are required",
         }
+    # Before the workflow, because the workflow writes an ATTEMPTED record
+    # carrying this id before Graph could refuse it.
+    if not _IDENTIFIER.match(case_id):
+        return _malformed_id("case_id")
 
     kind = ctx.text("kind", "expanded")
     default_name = NAIVE_SEARCH_NAME if kind == "naive" else EXPANDED_SEARCH_NAME
@@ -391,6 +435,10 @@ def _export(ctx: Context) -> ApiResult:
             "error": "invalid_input",
             "message": "case_id and search_id are required",
         }
+    if not _IDENTIFIER.match(case_id):
+        return _malformed_id("case_id")
+    if not _IDENTIFIER.match(search_id):
+        return _malformed_id("search_id")
 
     handoff = ctx.workflow.initiate_export(
         case_id,
@@ -431,6 +479,28 @@ def _search_json(search: Any) -> dict[str, Any]:
     }
 
 
+def _metrics(ctx: Context) -> ApiResult:
+    """Accept one workflow-timing event (DSA-A02). Opt-in, allowlisted.
+
+    Disabled is refused, not ignored: the client only posts when the server
+    said capture is on, so a post arriving anyway is a client this server did
+    not configure, and telling it so beats accepting-and-dropping. Validation
+    refuses the whole event on any unknown field or non-integer value — a
+    client must not be able to learn which of its fields survive.
+    """
+    if not ctx.config.metrics:
+        return 403, {
+            "error": "metrics_disabled",
+            "message": "Metrics capture is off. Set DSAR_METRICS=1 to opt in.",
+        }
+    try:
+        fields = metrics_validate(dict(ctx.body))
+        metrics_record(ctx.config, fields)
+    except MetricsError as exc:
+        return 400, {"error": "invalid_metrics", "message": str(exc)}
+    return 200, {"recorded": True}
+
+
 _Handler = Callable[[Context], ApiResult]
 
 _ROUTES: dict[str, _Handler] = {
@@ -444,6 +514,7 @@ _ROUTES: dict[str, _Handler] = {
     "/api/template/apply": _apply_template,
     "/api/search/create": _create_search,
     "/api/export": _export,
+    "/api/metrics": _metrics,
 }
 
 #: Routed by the ASGI layer. Declared here so the route table and the handler

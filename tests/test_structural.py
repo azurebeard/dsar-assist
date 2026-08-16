@@ -546,6 +546,116 @@ def test_docs_never_show_a_bare_dsar_command() -> None:
     assert offenders == []
 
 
+def test_the_readme_pins_the_current_release() -> None:
+    """The install a reader follows must be the released version, pinned.
+
+    The quickstart shipped as branch-head `git+https` and a `:latest` image —
+    the two installs a tag repoint or a bad merge changes underneath the user,
+    presented as the normal path while the deployment doc preached digests.
+    Every install URL in the README must therefore carry `@v<version>`, with
+    the version read from `pyproject.toml` so a release bump that forgets the
+    README fails here instead of shipping stale instructions.
+    """
+    manifest = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = manifest["project"]["version"]
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    suffixes = re.findall(r"git\+https://github\.com/azurebeard/dsar-assist(\S*)", readme)
+    assert suffixes, "the README no longer shows the uvx install at all"
+    unpinned = [s for s in suffixes if s != f"@v{version}"]
+    assert unpinned == [], (
+        f"README install URLs not pinned to @v{version}: {unpinned!r}"
+    )
+
+    # The container path pins by digest, never by a repointable tag.
+    assert ":latest" not in readme, "README shows a :latest image reference"
+    assert re.search(r"ghcr\.io/azurebeard/dsar-assist@sha256:[0-9a-f]{64}", readme), (
+        "README's docker run must reference the image by digest"
+    )
+
+
+def test_the_expand_payload_keys_are_ones_the_server_reads() -> None:
+    """The front end must not post a key the server silently discards.
+
+    The page sent `nicknames` and `build_subject` read `aliases` — nothing
+    read `nicknames`, so every nickname the operator typed was dropped from
+    the expanded query without an error, a warning, or a failing test. The
+    expanded query is the product's demonstration; losing its inputs silently
+    is the worst available failure. This holds the payload keys of the
+    `/api/expand` call in `app.js` to the set the server actually reads.
+    """
+    js = (REPO_ROOT / "src" / "dsar" / "web" / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    call = re.search(
+        r"""api\("/api/expand",\s*\{(.*?)\}\)""", js, re.DOTALL
+    )
+    assert call, "the /api/expand call is no longer findable in app.js"
+    sent = set(re.findall(r"^\s*([a-z_]+):", call.group(1), re.MULTILINE))
+    assert sent, "no payload keys parsed out of the /api/expand call"
+
+    # `build_subject` reads these off the body; `_expand` reads `case_id`.
+    read_by_server = {
+        "case_id",
+        "primary_email",
+        "display_name",
+        "aliases",
+        "former_names",
+        "other_emails",
+        "employee_id",
+        "date_from",
+        "date_to",
+    }
+    unread = sorted(sent - read_by_server)
+    assert unread == [], (
+        f"app.js posts keys the server never reads — silently dropped: {unread}"
+    )
+
+
+def test_the_metrics_package_cannot_import_subject_bearing_modules() -> None:
+    """Telemetry must be structurally unable to reach subject data.
+
+    The metrics store holds integers under allowlisted names. That claim is
+    cheap to state and easy to erode: one convenience import of the expansion
+    or the case model and a future field can carry a name. So the package is
+    denied the imports outright — the same construction as the audit record
+    having no field that could hold a query.
+    """
+    forbidden_prefixes = ("dsar.identity", "dsar.cases", "dsar.graph")
+    offenders: list[str] = []
+    for path in _python_files("src/dsar/metrics"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            for name in names:
+                if name.startswith(forbidden_prefixes):
+                    offenders.append(f"{_rel(path)}:{node.lineno}: {name}")
+    assert offenders == []
+
+
+def test_the_interface_states_the_clock_is_the_baseline() -> None:
+    """The deadline shown is the statutory baseline, and both surfaces say so.
+
+    The clock models one calendar month from receipt and nothing else — no
+    extensions, no clarification pauses. Displaying that date without the
+    caveat overstates what the tool tracks, which for a statutory date is a
+    compliance-shaped overstatement. The sentence is asserted here so the
+    caveat cannot quietly disappear from either surface while the feature
+    remains.
+    """
+    sentence = (
+        "Extensions and clock pauses are not modelled; "
+        "the date shown is the baseline."
+    )
+    for rel in ("README.md", "src/dsar/web/static/index.html"):
+        text = " ".join((REPO_ROOT / rel).read_text(encoding="utf-8").split())
+        assert sentence in text, f"{rel} lost the baseline caveat"
+
+
 def test_every_source_package_is_tracked_by_git() -> None:
     """No package may be excluded by an ignore rule.
 
@@ -604,6 +714,9 @@ def test_no_print_outside_the_cli_surface() -> None:
         # `dsar init` — asks two questions, writes one file, tells the person
         # what happened. Nothing it prints can carry a token or a subject.
         "src/dsar/init_cmd.py",
+        # `dsar metrics export` — integers under allowlisted names, and the
+        # package cannot import the modules subject data lives in (INV-81).
+        "src/dsar/metrics/report.py",
     }
     offenders: list[str] = []
     for path in _python_files("src/dsar"):

@@ -129,6 +129,7 @@
       "name": "Attachments and file types",
       "purpose": "Size the attachment volume before committing to an export.",
       "builder": "filetypes",
+      "verified": "unverified",
       "mailbox_only": true,
       "guidance": "Export is the one operation that bills on E3, and it bills by volume. Attachments are usually where that volume is.",
       "caution": "Like `kind:`, `filetype:` is a mail-item property — the site count goes to zero. Treat the result as an attachment count within mailboxes, not a file count across the estate.",

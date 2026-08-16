@@ -112,6 +112,15 @@ class Expansion:
             "display_name": self.subject.display_name,
             "identifiers": [i.to_json() for i in self.identifiers],
             "mentions": list(self.mentions),
+            # Former names are inside `mentions` for the query; they are also
+            # named separately so the interface can label them as what they
+            # are, rather than leaving a former name indistinguishable from a
+            # nickname in a document that an operator reviews for coverage.
+            "former_names": [f for f in self.subject.former_names if f.strip()],
+            # Used to match the directory record, never searched — the
+            # interface says which, because a chip that looks searched and is
+            # not would misstate the query's coverage.
+            "employee_id": self.subject.employee_id,
             "kql": self.kql,
             "naive_kql": self.naive,
             "warnings": list(self.warnings),
@@ -200,11 +209,16 @@ class GraphDirectoryResolver:
 
     def lookup(self, subject: Subject) -> list[dict[str, Any]]:
         if not self.enabled or self.operations is None:
+            # This message once offered "pass a `directory` snapshot in the
+            # request body" — an instruction nothing implemented. The offline
+            # resolver exists (`DirectoryResolver`) but is not reachable from
+            # the API, and an error message is documentation with the highest
+            # possible readership at the worst possible moment.
             raise ContractBlocked(
                 "Directory lookup needs identity expansion enabled and the "
-                "User.Read.All scope consented (the scope list, Phase 5). Set "
-                "DSAR_IDENTITY_EXPANSION=1 and sign in again, or pass a "
-                "`directory` snapshot in the request body to expand offline."
+                "User.Read.All scope consented. Set DSAR_IDENTITY_EXPANSION=1 "
+                "and sign in again. Anything the directory would have added "
+                "can be supplied by hand in the subject fields."
             )
 
         addresses = _unique([subject.primary_email, *subject.other_emails])

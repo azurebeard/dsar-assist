@@ -106,7 +106,11 @@ disk. The KQL is never audited: it names a real person and their aliases.
 
 **Elevation.** The token is delegated, so nothing can exceed the operator's own
 Purview permissions. Scopes are `eDiscovery.ReadWrite.All` plus optional
-`User.Read.All`; `doctor` proves at runtime that no download scope is present.
+`User.Read.All`; at every sign-in the scopes the identity platform actually
+granted are read from the token response, and a download-capable scope refuses
+the sign-in outright (`test_a_download_scope_in_the_token_response_refuses_sign_in`).
+An earlier version of this paragraph said `doctor` performed this check;
+nothing did, and `doctor` never could — it has no session and no token.
 *Inherited + enforced.*
 
 > **Accepted, and the most important trade here:** authorisation is **entirely

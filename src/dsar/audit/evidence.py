@@ -144,6 +144,7 @@ _CASE_ACTIONS = frozenset(
     {
         Action.CASE_CREATED.value,
         Action.IDENTITY_EXPANDED.value,
+        Action.TEMPLATE_APPLIED.value,
         Action.SEARCH_CREATED.value,
         Action.ESTIMATE_STARTED.value,
         Action.EXPORT_INITIATED.value,

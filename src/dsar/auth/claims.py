@@ -21,18 +21,35 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from dsar.auth.errors import NotAssigned
 from dsar.auth.provider import KNOWN_ROLES, Principal
 
-__all__ = ["RoleEnforcement", "build_principal", "ClaimError"]
+__all__ = [
+    "RoleEnforcement",
+    "build_principal",
+    "ClaimError",
+    "DownloadScopeGranted",
+]
 
 log = logging.getLogger(__name__)
 
 
 class ClaimError(Exception):
     """The ID token is missing something it must carry, or carries a wrong tenant."""
+
+
+class DownloadScopeGranted(ClaimError):
+    """The STS granted a download-capable scope. This sign-in is refused.
+
+    Should be unreachable: the download permission lives on a resource this
+    codebase never names, so a Graph token response has no way to grant one.
+    Unreachable is a good place for an assertion — a token that arrives here
+    carrying one means the registration, or the request, is no longer the one
+    this design describes, and continuing would make the no-data-plane claim
+    quietly false.
+    """
 
 
 class RoleEnforcement(enum.Enum):
@@ -69,8 +86,15 @@ def build_principal(
     *,
     expected_tenant_id: str,
     enforcement: RoleEnforcement = RoleEnforcement.ADVISORY,
+    granted_scopes: Iterable[str] = (),
 ) -> Principal:
-    """Validate the claims this application depends on, and build a `Principal`."""
+    """Validate the claims this application depends on, and build a `Principal`.
+
+    `granted_scopes` comes from the token **response** body, never from the
+    access token — the response's `scope` parameter is OAuth response data the
+    STS addresses to the client, so reading it does not touch the rule that
+    the access token is never parsed.
+    """
     tid = str(id_token_claims.get("tid", ""))
     if not tid:
         raise ClaimError("ID token carries no `tid` claim")
@@ -139,6 +163,23 @@ def build_principal(
 
     auth_time = id_token_claims.get("auth_time")
 
+    scopes = frozenset(str(s) for s in granted_scopes if str(s).strip())
+    download_capable = sorted(s for s in scopes if "download" in s.lower())
+    if download_capable:
+        # INV-30. The no-data-plane claim says the issued token carries no
+        # download scope, and this is the check behind it — enforced where a
+        # token response actually exists, not in `doctor`, which has neither
+        # a session nor a token and never could have checked it.
+        log.warning(
+            "REFUSED sign-in: oid=%s was granted download-capable scope(s) %s",
+            oid,
+            download_capable,
+        )
+        raise DownloadScopeGranted(
+            "the token response granted a download-capable scope, which this "
+            "application must never hold: " + ", ".join(download_capable)
+        )
+
     return Principal(
         oid=oid,
         tenant_id=tid,
@@ -153,5 +194,6 @@ def build_principal(
         auth_time=int(auth_time) if isinstance(auth_time, (int, float)) else None,
         uti=str(id_token_claims.get("uti", "")),
         client_capabilities=frozenset(str(c) for c in capabilities_raw),
+        granted_scopes=scopes,
         login_hint=str(id_token_claims.get("login_hint", "")),
     )

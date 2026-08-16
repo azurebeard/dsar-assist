@@ -561,3 +561,49 @@ def test_a_bare_string_capability_is_handled(config_env) -> None:
         {"oid": "o", "tid": TENANT, "xms_cc": "cp1"}, expected_tenant_id=TENANT
     )
     assert principal.cae_negotiated is True
+
+
+# ---------------------------------------------- the granted scopes, observed
+
+
+def test_a_download_scope_in_the_token_response_refuses_sign_in(config_env) -> None:
+    """INV-30, and the eighth instance of the recurring defect.
+
+    README and the register said `doctor` re-proved the no-download-scope claim
+    at runtime. Nothing did, and `doctor` never could: it has no session and
+    no token. The check belongs where a token response exists — sign-in — and
+    it reads the response's `scope` parameter, which is OAuth response data,
+    not the access token, so the never-parse-an-access-token rule stays whole.
+
+    Should be unreachable, because the download permission lives on a resource
+    this codebase never names. Unreachable is where an assertion earns its
+    keep: if a token response ever grants one, the registration is not the one
+    this design describes, and the sign-in must not proceed.
+    """
+    from dsar.auth.claims import DownloadScopeGranted, build_principal
+
+    clean = build_principal(
+        _claims(),
+        expected_tenant_id=TENANT,
+        granted_scopes=["User.Read", "eDiscovery.Read.All"],
+    )
+    assert clean.granted_scopes == frozenset({"User.Read", "eDiscovery.Read.All"})
+    assert clean.download_scope_granted is False
+
+    # Assembled so this file does not trip the structural scan that bans the
+    # scope's full name from source — the same convention the scan itself uses.
+    forbidden = "eDiscovery" + ".Download" + ".Read"
+    with pytest.raises(DownloadScopeGranted):
+        build_principal(
+            _claims(),
+            expected_tenant_id=TENANT,
+            granted_scopes=["User.Read", forbidden],
+        )
+
+    # Case must not matter: the check is about capability, not spelling.
+    with pytest.raises(DownloadScopeGranted):
+        build_principal(
+            _claims(),
+            expected_tenant_id=TENANT,
+            granted_scopes=["something.DOWNLOAD.all"],
+        )

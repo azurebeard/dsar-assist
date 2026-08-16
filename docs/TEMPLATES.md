@@ -71,9 +71,18 @@ present on every machine running that image, because it *is* the image.
 | `guidance` | yes in practice | Why reach for it. A test requires `purpose` and `guidance` on every shipped template |
 | `caution` | — | What it costs. Required in spirit for anything that narrows sharply |
 | `mailbox_only` | — | See below. Drives a warning, so it is a field and not prose |
-| `verified` | — | The date this template's KQL was last run against a real tenant |
+| `verified` | yes | The date this template's KQL was last run against a real tenant, or the literal `"unverified"` — a visible admission, never a fabricated date. Refused if absent |
 
 `inputs[].kind` is one of `date`, `text`, `terms`, `choice`, `filetypes`.
+
+The top-level `version` is required and read: every template application is
+stamped into the audit trail as `template id @ file version`, so a change
+that shapes searches differently needs a version bump with it, or the trail
+attributes two behaviours to one number. The bump is pull-request review
+discipline — nothing machine-checks that content and version moved together.
+The stamp is the id and the version only — never the rendered query and never
+the operator's input values, which is what keeps the trail free of subject
+data.
 
 ---
 

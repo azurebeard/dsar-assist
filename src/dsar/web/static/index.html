@@ -82,7 +82,8 @@
       <p class="muted small">
         The day the request arrived — not today, unless it arrived today. The
         statutory clock is <strong>one calendar month from receipt</strong>, so
-        this is what the deadline is calculated from.
+        this is what the deadline is calculated from. Extensions and clock
+        pauses are not modelled; the date shown is the baseline.
       </p>
       <p class="warn small">
         Recorded once, when the case is created, and not editable here. To
@@ -124,7 +125,9 @@
 
     <!-- --------------------------------------------------- the delta -->
     <section id="expansion" hidden>
-      <h3>What the directory knows</h3>
+      <!-- Not "what the directory knows": operator-supplied identifiers land
+           in the same box, and the groups below say where each came from. -->
+      <h3>The subject, resolved</h3>
       <div id="identifiers"></div>
       <p id="expansion-warnings" class="warn small" hidden></p>
 

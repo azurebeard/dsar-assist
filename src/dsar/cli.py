@@ -70,6 +70,17 @@ def build_parser() -> argparse.ArgumentParser:
         "-n", type=int, default=20, dest="count", help="how many (default 20)"
     )
 
+    metrics = sub.add_parser(
+        "metrics", help="aggregate the opt-in workflow timings (DSA-A02)"
+    )
+    metrics_sub = metrics.add_subparsers(dest="metrics_command", metavar="<verb>")
+    metrics_export = metrics_sub.add_parser(
+        "export", help="count, median and p90 per captured field"
+    )
+    metrics_export.add_argument(
+        "--json", action="store_true", dest="as_json", help="machine-readable"
+    )
+
     init = sub.add_parser(
         "init", help="write ~/.dsar/config.json once, so nothing needs exporting"
     )
@@ -119,6 +130,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             getattr(args, "audit_command", None),
             as_json=getattr(args, "as_json", False),
             count=getattr(args, "count", 20),
+        )
+
+    if args.command == "metrics":
+        from dsar.metrics.report import run_metrics
+
+        return run_metrics(
+            getattr(args, "metrics_command", None),
+            as_json=getattr(args, "as_json", False),
         )
 
     if args.command == "up":

@@ -64,6 +64,24 @@ class Principal:
     #: `doctor` could never have done it: it has no session and therefore no
     #: ID token. It belongs here, where the token is.
     client_capabilities: frozenset[str] = field(default_factory=frozenset)
+    #: The scopes the STS actually granted, read from the **token response**
+    #: body — OAuth response data, not the access token, so the rule above
+    #: (never parse an access token) stays intact. The requested scopes are a
+    #: choice this codebase makes; the granted scopes are Entra's answer, and
+    #: only the answer can prove what the token carries.
+    granted_scopes: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def download_scope_granted(self) -> bool:
+        """Was any download-capable scope granted?
+
+        The eDiscovery download permission lives on a separate resource this
+        codebase never names, so a Graph token response should never grant one
+        — which is exactly why the check is cheap and the refusal absolute.
+        README's no-data-plane claim cites a runtime check; this is it
+        (INV-30). The comment used to be the whole implementation.
+        """
+        return any("download" in scope.lower() for scope in self.granted_scopes)
 
     @property
     def cae_negotiated(self) -> bool:

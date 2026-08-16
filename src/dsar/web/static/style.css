@@ -171,6 +171,13 @@ textarea { resize: vertical; }
 }
 .chip.mention { border-style: dashed; }
 
+/* Group labels inside the resolved-subject box: quiet, but they carry the
+   provenance — supplied vs directory vs matched-only — which is the fact an
+   operator reviewing coverage actually needs. */
+.chip-group {
+  margin: 0.75rem 0 0.35rem; font-size: 0.8rem; color: var(--muted);
+}
+
 .warn { color: #a8620a; }
 @media (prefers-color-scheme: dark) { .warn { color: #e0a458; } }
 

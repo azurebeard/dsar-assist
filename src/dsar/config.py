@@ -212,6 +212,13 @@ class Config:
     port: int = DEFAULT_PORT
     #: Optional. Off by default so the consent surface stays minimal.
     identity_expansion: bool = False
+    #: Opt-in workflow timing capture (DSA-A02). Off by default: measurement
+    #: is a choice, not a side effect. When on, the browser posts one summary
+    #: of milestone durations per completed workflow — numbers and counts
+    #: only, held to an allowlist server-side — to a local metrics store that
+    #: is separate from the audit trail, because the trail is evidence and
+    #: timings are telemetry.
+    metrics: bool = False
     #: Whether a DSAR app role must be present in the ID token.
     #:
     #: Microsoft does not document whether the `roles` claim reaches a **public
@@ -347,6 +354,11 @@ def load_config(
         audit_dir=audit_dir,
         port=port,
         identity_expansion=_bool(expansion_raw) if expansion_raw else False,
+        metrics=(
+            _bool(metrics_raw)
+            if (metrics_raw := pick("DSAR_METRICS", "metrics"))
+            else False
+        ),
         require_app_role=(
             _bool(role_raw) if (role_raw := pick("DSAR_REQUIRE_APP_ROLE", "require_app_role")) else True
         ),

@@ -10,7 +10,8 @@ separate resource carrying the eDiscovery download permission is never named
 in this codebase, and no download or preview call exists in the permitted
 operations table. Exports are collected from the Purview portal under the
 operator's own identity. All of this is asserted by tests at every commit, and
-`doctor` re-proves the scope claim at runtime against the issued token.
+at every sign-in the scopes the identity platform actually granted are checked
+against the claim: a download-capable scope refuses the sign-in outright.
 
 ## What it does
 
@@ -20,7 +21,8 @@ operator's own identity. All of this is asserted by tests at every commit, and
 - **Tracks the statutory clock**: one calendar month from the date of receipt,
   not thirty days, and not from when the case was opened. The due date and
   days remaining appear on the request list. A case with no recorded receipt
-  date shows "not recorded" rather than a guessed deadline.
+  date shows "not recorded" rather than a guessed deadline. Extensions and
+  clock pauses are not modelled; the date shown is the baseline.
 - **Builds two queries and shows both.** The naive query uses the primary
   address only. The expanded query adds what the directory knows plus what you
   supply (aliases, former names, employee ID). Both are editable and nothing
@@ -46,11 +48,30 @@ Purview permissions do not already allow, and holds no credential of its own.
 The two queries are always shown before anything runs, side by side and
 editable:
 
-![The resolved identifiers and mentions, and the naive and expanded queries side by side, editable, with nothing yet run.](docs/images/two-queries.png)
+![The resolved subject, grouped by provenance: supplied by the operator, from the directory, searched as text, and the employee ID labelled as matched but not searched. Below, the naive and expanded queries side by side, editable, with nothing yet run.](docs/images/two-queries.png)
 
 And once both estimates complete, the difference is stated plainly:
 
 ![A case with both searches complete: the naive query found 40 items across 12 mailboxes and 1 site, the expanded query 61 items across 14 mailboxes and 3 sites, and the banner reads: the naive query missed 21 items, 53% more, and 4 locations it never looked at.](docs/images/case-delta.png)
+
+## What it is not
+
+The narrowness is deliberate. Purview stays authoritative for cases, searches,
+review and export; this tool removes the repetitive setup around it and adds
+nothing that would make it a second privacy platform. It is not:
+
+- **an intake portal or identity verification.** Requests arrive, and
+  requesters are verified, outside this tool.
+- **a statutory workflow manager.** It tracks the baseline response date only.
+  Extensions, clarification pauses and requester communication are yours.
+- **a redaction engine or a disclosure portal.** Review, redaction and
+  delivery happen in Purview and whatever your organisation already uses.
+- **cross-system discovery.** Microsoft 365 only, through Purview.
+- **a repository of responsive data.** There is no data plane; it cannot hold
+  what it cannot see.
+
+The security consequences of these boundaries, and the changes that would
+reopen them, are in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 
 ---
 
@@ -63,30 +84,38 @@ on the host, nothing cloned.
 
 ```powershell
 winget install astral-sh.uv
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar init
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar up
 ```
 
 **macOS / Linux:**
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar init
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar up
 ```
 
 `init` runs once. It asks for the two GUIDs identifying your app registration
 (neither is a secret), validates them, and writes `~/.dsar/config.json`
 owner-only. After that, every run is just `up`.
 
+These commands pin the current release, which is the supported install.
+Installing from the branch head or an unpinned image tag is a development
+path; for that, clone the repository and use the Develop section below.
+
 **Container**, the second supported path. Multi-arch (amd64 and arm64),
-signed, SBOM and provenance attached:
+signed, SBOM and provenance attached. Pinned by digest because a tag can be
+repointed and a digest cannot; this is the signed digest of the release:
 
 ```bash
 docker run --rm -p 127.0.0.1:8765:8765 \
   -v ~/.dsar:/home/dsar/.dsar \
-  ghcr.io/azurebeard/dsar-assist:latest
+  ghcr.io/azurebeard/dsar-assist@sha256:d6508dd31f9cb012ab902ccebe1724b930ed839753f698f0a628d8ab69a59755
 ```
+
+The verification command for the signature is in
+[docs/SBOM.md](docs/SBOM.md).
 
 From a clone, `./dsar up` on macOS/Linux or `.\dsar.ps1 up` on Windows picks
 whichever runtime is available.
@@ -94,7 +123,7 @@ whichever runtime is available.
 If anything is wrong:
 
 ```bash
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar doctor
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar doctor
 ```
 
 `doctor` names the problem and the fix, including the exact redirect URI to
@@ -140,9 +169,9 @@ highlighted.
 **Audit trail**:
 
 ```bash
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar audit verify
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar audit tail
-uvx --from git+https://github.com/azurebeard/dsar-assist dsar audit evidence <case-id>
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar audit verify
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar audit tail
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar audit evidence <case-id>
 ```
 
 `verify` recomputes the hash chain and names the first break if anything was
@@ -169,6 +198,7 @@ or hosted mode. Environment wins over the file:
 | `DSAR_PORT` | no | Default `8765` |
 | `DSAR_AUDIT_DIR` | no | Default `~/.dsar/audit` |
 | `DSAR_IDENTITY_EXPANSION` | no | Enables the directory-read scope |
+| `DSAR_METRICS` | no | Opt-in workflow timing capture: bounded integers only, no subject data, local file. Method in [docs/BENCHMARK.md](docs/BENCHMARK.md) |
 | `DSAR_BASE_URL` | hosted | External origin, used to build the redirect URI |
 | `DSAR_UAMI_CLIENT_ID` | hosted | User-assigned managed identity for the client assertion |
 | `DSAR_AUDIT_BLOB_URL` | hosted | Append-blob container for the audit trail |

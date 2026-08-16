@@ -24,6 +24,10 @@
     pollTimer: null, pollStarted: null, generated: null,
     tickTimer: null, running: 0, total: 0, statusTimer: null, view: null,
     nextPollAt: null, statusBusy: false, viewEpoch: 0,
+    //: Opt-in workflow timing (DSA-A02). The server says whether capture is
+    //: on; `timing` is one workflow's milestones, integers only, posted once
+    //: when both estimates complete. An abandoned flow never posts.
+    metricsEnabled: false, timing: null,
     //: Which narrowings have been applied to each query, by template id. The
     //: delta is only the expansion's contribution while these two agree; see
     //: renderComparability().
@@ -52,6 +56,45 @@
     }
     if (response.status === 401) { renderSignedOut(); throw new Error("signed out"); }
     return { status: response.status, payload };
+  }
+
+  // ------------------------------------------------- metrics (DSA-A02)
+  // Milestone durations and counts, and nothing else: no reference, no
+  // subject value, no query ever leaves through this path, and the server
+  // refuses any field not on its allowlist. `waiting` accumulates time spent
+  // inside requests so active_ms can approximate operator attention — the
+  // number the productivity claim is actually about — rather than repeating
+  // Microsoft's processing time back as if it were ours.
+
+  function startTiming() {
+    state.timing = {
+      flowStarted: performance.now(), waiting: 0, interactions: 0, posted: false,
+    };
+  }
+
+  async function timed(field, work) {
+    const t = state.timing;
+    const t0 = performance.now();
+    try {
+      return await work();
+    } finally {
+      if (t) {
+        const ms = performance.now() - t0;
+        t.waiting += ms;
+        t[field] = Math.round(ms);
+      }
+    }
+  }
+
+  function interaction(count) {
+    if (state.timing) state.timing.interactions += count || 1;
+  }
+
+  async function postMetrics(fields) {
+    if (!state.metricsEnabled) return;
+    try {
+      await api("/api/metrics", fields);
+    } catch (err) { /* telemetry never interrupts the work it measures */ }
   }
 
   function fail(payload, fallback) {
@@ -129,6 +172,9 @@
     }
     state.view = name;
     state.viewEpoch += 1;
+    // Each entry to the form is a fresh measurement; a flow abandoned before
+    // both estimates complete simply never posts.
+    if (name === "new-request") startTiming();
     $("view-" + name).removeAttribute("hidden");
     for (const tab of document.querySelectorAll(".tab")) {
       tab.classList.toggle("active", tab.dataset.view === name);
@@ -175,6 +221,7 @@
 
   function renderSignedIn(me) {
     state.canWrite = !!me.can_write;
+    state.metricsEnabled = !!me.metrics_enabled;
     // Every role held, not the one that decided the outcome. App roles in
     // Entra are ADDITIVE — a user assigned both carries both in the token, and
     // nothing "wins". Showing only the effect made that look like a conflict
@@ -268,12 +315,13 @@
       const epoch = state.viewEpoch;
       status("Creating the eDiscovery case in Microsoft Purview\u2026", true, epoch);
       try {
-        const result = await api("/api/case/create", {
+        interaction($("received").value ? 3 : 2); // button + filled fields
+        const result = await timed("case_create_ms", () => api("/api/case/create", {
           reference,
           // Empty means "not recorded"; a malformed one is refused by the
           // server rather than silently dropped.
           received: $("received").value,
-        });
+        }));
         if (result.status !== 201) {
           return fail(result.payload, "The case could not be created.");
         }
@@ -304,14 +352,23 @@
     try {
       const epoch = state.viewEpoch;
       status("Looking the subject up in the directory\u2026", true, epoch);
-      const { status: code, payload } = await api("/api/expand", {
+      const filled = ["primary-email", "display-name", "other-emails",
+                      "nicknames", "employee-id"]
+        .filter((id) => $(id).value.trim()).length;
+      interaction(1 + filled); // the button, plus each field the operator used
+      const { status: code, payload } = await timed("expand_ms", () => api("/api/expand", {
         case_id: state.case_id,
         primary_email: $("primary-email").value.trim(),
         display_name: $("display-name").value.trim(),
         other_emails: lines("other-emails"),
-        nicknames: lines("nicknames"),
+        // The server reads `aliases`; this sent `nicknames` and NOTHING read
+        // it, so every nickname the operator typed was silently dropped from
+        // the expanded query — the exact material the delta exists to show.
+        // Found while grouping the preview by provenance; a structural test
+        // now holds these keys to the ones the server actually reads.
+        aliases: lines("nicknames"),
         employee_id: $("employee-id").value.trim(),
-      });
+      }));
       if (code !== 200) return fail(payload, "The subject could not be resolved.");
       renderExpansion(payload);
       const found = (payload.identifiers || []).length;
@@ -325,15 +382,66 @@
     } catch (err) { /* handled */ }
   }
 
+  // What each identifier kind means to a reader who is not an Entra
+  // specialist. The backend has carried `kind` from the start; the interface
+  // used to throw it away and print `source` instead — which for a directory
+  // hit is the record's own UPN, so most chips read "address · same address"
+  // and a proxy address was indistinguishable from a supplied alias.
+  const KIND_LABELS = {
+    primary: "primary address",
+    other_mail: "other address",
+    alias: "alias",
+    mail: "directory mail",
+    upn: "sign-in name",
+    proxy_address: "proxy address",
+  };
+
   function renderExpansion(data) {
     const box = $("identifiers");
     box.replaceChildren();
-    for (const identifier of data.identifiers || []) {
-      const chip = el("span", identifier.value + "  ·  " + identifier.source, "chip");
-      box.appendChild(chip);
-    }
-    for (const mention of data.mentions || []) {
-      box.appendChild(el("span", '"' + mention + '"  ·  mention', "chip mention"));
+
+    const group = (title, chips) => {
+      if (!chips.length) return;
+      box.appendChild(el("p", title, "chip-group"));
+      const row = el("div");
+      for (const chip of chips) row.appendChild(chip);
+      box.appendChild(row);
+    };
+    const chip = (identifier, withSource) => el(
+      "span",
+      identifier.value + "  ·  " + (KIND_LABELS[identifier.kind] || identifier.kind) +
+        (withSource ? "  ·  " + identifier.source : ""),
+      "chip");
+
+    const identifiers = data.identifiers || [];
+    // Operator-supplied identifiers without an @ are searched as text and
+    // already appear under mentions; repeating them here as addresses would
+    // overstate the participant clauses.
+    const operator = identifiers.filter(
+      (i) => i.source === "operator" && i.value.indexOf("@") !== -1);
+    const directory = identifiers.filter((i) => i.source !== "operator");
+    // The record's own UPN is only worth printing when more than one
+    // directory record matched — otherwise every chip repeats one address.
+    const manyRecords = new Set(directory.map((i) => i.source)).size > 1;
+
+    group("Supplied by you — searched as participants", operator.map((i) => chip(i, false)));
+    group("From the directory — searched as participants",
+          directory.map((i) => chip(i, manyRecords)));
+
+    const formerNames = data.former_names || [];
+    const mentionChips = (data.mentions || [])
+      .filter((m) => formerNames.indexOf(m) === -1)
+      .map((m) => el("span", '"' + m + '"  ·  mention', "chip mention"));
+    const formerChips = formerNames.map(
+      (m) => el("span", '"' + m + '"  ·  former name', "chip mention"));
+    group("Searched as text, in case the subject is discussed rather than included",
+          mentionChips.concat(formerChips));
+
+    if (data.employee_id) {
+      // Matched, not searched — and the label says which. A chip that looks
+      // searched and is not would misstate the query's coverage.
+      group("Used to match the directory record — not in the query",
+            [el("span", data.employee_id + "  ·  employee ID", "chip")]);
     }
 
     if ((data.warnings || []).length) {
@@ -543,6 +651,7 @@
     }
 
     try {
+      interaction(1);
       const epoch = state.viewEpoch;
       status("Applying \u201c" + template.name + "\u201d\u2026", true, epoch);
       // One box at a time, and the failure message names how far it got. A
@@ -554,6 +663,10 @@
           query: $(BOX[target]).value,
           template_id: template.id,
           values,
+          // So the audit record lands under the case: the trail states which
+          // reviewed narrowing shaped the search, and "which case" is what
+          // makes that findable later.
+          case_id: state.case_id,
         });
         if (code !== 200) {
           renderComparability();
@@ -585,6 +698,8 @@
         markStep(step, "");
       }
       try {
+        interaction(1);
+        const submitStart = performance.now();
         // The query sent is whatever is in the box — edited or not. A query the
         // operator saw and a query that runs must be the same string, or the
         // review step means nothing.
@@ -613,6 +728,20 @@
         }
         markStep("expanded", "done");
         markStep("expanded-run", "done");
+
+        const t = state.timing;
+        if (t) {
+          const submitMs = performance.now() - submitStart;
+          t.waiting += submitMs;
+          t.searches_submit_ms = Math.round(submitMs);
+          // Operator attention: time on the form minus time inside requests.
+          // The estimate waits from here on are Microsoft's processing time,
+          // reported separately and never claimed as ours.
+          t.active_ms = Math.round(performance.now() - t.flowStarted - t.waiting);
+          t.submittedAt = performance.now();
+          t.templates_applied = new Set(
+            state.narrowings.naive.concat(state.narrowings.expanded)).size;
+        }
 
         status("Both estimates started. Watching for results\u2026", true, epoch);
         openCase({ case_id: state.case_id, reference: state.reference });
@@ -821,6 +950,29 @@
 
       state.running = rows.filter((s) => !(s.statistics || {}).complete).length;
       state.total = rows.length;
+
+      // Metrics milestones for the workflow this page belongs to. Guarded on
+      // submittedAt so a case opened from the list — no live workflow — never
+      // measures anything.
+      const t = state.timing;
+      if (t && t.submittedAt && !t.posted && rows.length) {
+        const now = performance.now();
+        if (!t.first_estimate_ms && rows.some((s) => (s.statistics || {}).complete)) {
+          t.first_estimate_ms = Math.round(now - t.submittedAt);
+        }
+        if (rows.every((s) => (s.statistics || {}).complete)) {
+          t.both_estimates_ms = Math.round(now - t.submittedAt);
+          t.total_ms = Math.round(now - t.flowStarted);
+          t.posted = true;
+          const fields = { interactions: t.interactions };
+          for (const key of ["active_ms", "case_create_ms", "expand_ms",
+                             "searches_submit_ms", "first_estimate_ms",
+                             "both_estimates_ms", "total_ms", "templates_applied"]) {
+            if (typeof t[key] === "number") fields[key] = t[key];
+          }
+          postMetrics(fields);
+        }
+      }
 
       // A refresh started on the case view can land after the operator has
       // gone back to the list. Writing the result then leaves a stale status

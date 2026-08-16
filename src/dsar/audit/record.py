@@ -62,6 +62,11 @@ class Action(str, enum.Enum):
     SIGN_OUT = "sign_out"
     CASE_CREATED = "case_created"
     IDENTITY_EXPANDED = "identity_expanded"
+    #: A reviewed narrowing was rendered onto a query. The record carries the
+    #: template id and the template file's version, never the query text — the
+    #: search that eventually runs is recorded name-only, so this is the only
+    #: place the trail can say which reviewed narrowing shaped it.
+    TEMPLATE_APPLIED = "template_applied"
     SEARCH_CREATED = "search_created"
     ESTIMATE_STARTED = "estimate_started"
     EXPORT_INITIATED = "export_initiated"

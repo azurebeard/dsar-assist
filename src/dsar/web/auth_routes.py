@@ -24,7 +24,7 @@ from starlette.responses import (
 from dsar.audit.record import Action, Outcome
 from dsar.audit.sink import build_sink
 from dsar.audit.trail import AuditTrail
-from dsar.auth.claims import RoleEnforcement, build_principal
+from dsar.auth.claims import DownloadScopeGranted, RoleEnforcement, build_principal
 from dsar.auth.errors import NotAssigned
 from dsar.auth.msal_client import build_client, flow_extras, scopes_for
 from dsar.auth.provider import Principal
@@ -196,6 +196,29 @@ async def callback(request: Request) -> Response:
             result.get("id_token_claims") or {},
             expected_tenant_id=config.tenant_id,
             enforcement=state.role_enforcement,
+            # The response's `scope` parameter — OAuth response data, not the
+            # access token, which is never parsed. This is what lets INV-30
+            # ("the issued token carries no download scope") be a check rather
+            # than a comment.
+            granted_scopes=str(result.get("scope") or "").split(),
+        )
+    except DownloadScopeGranted as exc:
+        # Should be unreachable — the download permission lives on a resource
+        # this codebase never names — which is exactly why arriving here is
+        # recorded: the registration is no longer the one this design
+        # describes, and that fact must outlive the browser tab it happened in.
+        state.trail.write(
+            Action.SIGN_IN_REFUSED,
+            Outcome.DENIED,
+            actor_oid=str((result.get("id_token_claims") or {}).get("oid", "")),
+            tenant_id=config.tenant_id,
+            detail="download-capable scope granted",
+        )
+        return HTMLResponse(
+            f"<h1>Sign-in refused</h1><p>{_escape(str(exc))}</p>"
+            "<p>The application registration has gained a permission this "
+            "tool must never hold. Tell whoever administers it.</p>",
+            status_code=403,
         )
     except NotAssigned as exc:
         # A refused sign-in is recorded. A trail holding only successes

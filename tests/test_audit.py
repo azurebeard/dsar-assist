@@ -527,3 +527,83 @@ def test_one_case_filter_returns_the_whole_story() -> None:
     assert len(old_filter) < len(for_case), (
         "target_id alone is now sufficient, so this test proves nothing"
     )
+
+
+def test_a_template_application_is_recorded_with_id_and_version() -> None:
+    """DSA-D01. Applying a template was a pure render with no audit write.
+
+    The search that eventually runs is recorded name-only — deliberately, the
+    query names a real person — so before this record existed the trail could
+    not say which reviewed narrowing shaped a search. The stamp is the
+    template id and the template file's version, and nothing else: never the
+    query, never the operator's input values, which carry exactly the subject
+    data the record shape forbids.
+    """
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+
+    sink = MemorySink()
+    trail = AuditTrail(sink)
+    operator = Principal(
+        oid="oid-1", tenant_id="t", roles=frozenset({"DSAR.Operator"})
+    )
+    workflow = Workflow(object(), operator, trail)  # type: ignore[arg-type]
+
+    workflow.record_template_applied("time_window", "1.0.0", case_id="case-1")
+
+    [record] = sink.records
+    assert record.action == "template_applied"
+    assert record.outcome == "ok"
+    assert record.case_id == "case-1"
+    assert record.detail == "time_window @ 1.0.0"
+    assert record.actor_oid == "oid-1"
+
+    # And it is findable where the evidence pack looks: the one case filter.
+    assert [r for r in sink.records if r.case_id == "case-1"] == [record]
+
+
+def test_a_free_text_case_id_cannot_ride_into_the_trail() -> None:
+    """WS10 SEC-M-01. `detail` is scrubbed and capped; `case_id` was written
+    verbatim — and several workflow paths write it into an ATTEMPTED or
+    TEMPLATE_APPLIED record BEFORE any Graph call could refuse it. The trail
+    is append-only, hosted under an immutability policy, so a subject's name
+    riding an identifier field would be subject data at rest that nobody can
+    erase. Identifiers are letters, digits and hyphens, bounded; anything
+    else is refused at the API boundary with nothing written."""
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+    from dsar.web.api import handle
+
+    sink = MemorySink()
+    trail = AuditTrail(sink)
+    operator = Principal(
+        oid="oid-1", tenant_id="t", roles=frozenset({"DSAR.Operator"})
+    )
+    workflow = Workflow(object(), operator, trail)  # type: ignore[arg-type]
+
+    for path, body in (
+        (
+            "/api/template/apply",
+            {"query": "x", "template_id": "t", "case_id": "Jordan Hale <j@x.test>"},
+        ),
+        (
+            "/api/search/create",
+            {"query": "x", "case_id": "jordan.hale@x.test employee E-2214"},
+        ),
+        (
+            "/api/expand",
+            {"primary_email": "a@x.test", "case_id": "a" * 65},
+        ),
+    ):
+        status, payload = handle(
+            path,
+            body,
+            principal=operator,
+            cases=None,  # type: ignore[arg-type]
+            config=None,  # type: ignore[arg-type]
+            workflow=workflow,
+        )
+        assert status == 400, path
+        assert payload["error"] == "invalid_input", path
+
+    assert sink.records == [], "a refused identifier still reached the trail"

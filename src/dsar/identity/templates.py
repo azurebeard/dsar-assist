@@ -122,6 +122,7 @@ def load_templates(path: Path | None = None) -> tuple[QueryTemplate, ...]:
         raise TemplateError(f"query templates are unreadable: {exc}") from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("templates"), list):
         raise TemplateError("query templates must be an object with a `templates` list")
+    _require_version(raw)
 
     out: list[QueryTemplate] = []
     seen: set[str] = set()
@@ -134,6 +135,33 @@ def load_templates(path: Path | None = None) -> tuple[QueryTemplate, ...]:
     return tuple(out)
 
 
+def _require_version(raw: dict[str, Any]) -> str:
+    """The file-level version, required rather than optional.
+
+    The field existed from the start and nothing read it — which is how the
+    `attachments` template shipped without a `verified` date: an unread field
+    is an optional field whatever the schema says. It is read now because the
+    audit trail stamps `template id @ file version` on every application, and
+    a version that can silently be absent would stamp records with nothing.
+    """
+    version = raw.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise TemplateError("query templates must carry a top-level `version`")
+    return version.strip()
+
+
+def templates_version(path: Path | None = None) -> str:
+    """The version of the template file, for the audit stamp."""
+    source = path or TEMPLATES_PATH
+    try:
+        raw = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TemplateError(f"query templates are unreadable: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise TemplateError("query templates must be an object")
+    return _require_version(raw)
+
+
 def _parse_template(entry: Any) -> QueryTemplate:
     if not isinstance(entry, dict):
         raise TemplateError("each template must be an object")
@@ -143,6 +171,15 @@ def _parse_template(entry: Any) -> QueryTemplate:
     builder = entry["builder"]
     if builder not in _BUILDERS:
         raise TemplateError(f"template {entry['id']!r} names an unknown builder {builder!r}")
+
+    # `verified` is required: it records when the rendered KQL was last run
+    # against a real tenant, and an optional field is how one template shipped
+    # without it. A template that has not been run says `"unverified"` — a
+    # visible admission, where a fabricated date would be this project's own
+    # recurring defect written into its data file.
+    verified = entry.get("verified")
+    if not isinstance(verified, str) or not verified.strip():
+        raise TemplateError(f"template {entry['id']!r} is missing a usable 'verified'")
 
     inputs = tuple(_parse_input(i, entry["id"]) for i in entry.get("inputs", []))
     fixed = tuple(str(t) for t in entry.get("fixed_terms", []))
@@ -159,7 +196,7 @@ def _parse_template(entry: Any) -> QueryTemplate:
         fixed_terms=fixed,
         guidance=str(entry.get("guidance") or ""),
         caution=str(entry.get("caution") or ""),
-        verified=str(entry.get("verified") or ""),
+        verified=verified.strip(),
         mailbox_only=bool(entry.get("mailbox_only", False)),
     )
 
