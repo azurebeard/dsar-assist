@@ -1,9 +1,11 @@
 # DSAR Assist
 
-> **Resuming work? Read [`HANDOVER.md`](HANDOVER.md) first.**
-
-A control plane for Microsoft Purview eDiscovery cases raised in response to
-Data Subject Access Requests.
+A tool for answering **Data Subject Access Requests** against Microsoft 365.
+When someone exercises their right of access, the person handling it has to
+find everything the organisation holds about them — mail, files, chat — inside
+a statutory deadline. This tool runs that search through Microsoft Purview
+eDiscovery, tracks the deadline, and keeps a tamper-evident record of who
+searched for what.
 
 **It has no data plane.** It cannot show you a document and it cannot copy one
 anywhere. The app registration requests Microsoft Graph and nothing else — the
@@ -14,32 +16,63 @@ under their own identity. All three facts are asserted structurally at every
 commit, and `doctor` re-proves the first at runtime by inspecting the scopes on
 the issued token.
 
-Successor to `dsar-orchestrator` (mission `8652e638`). That version worked and
-failed to move to a second machine; this one is built around not doing that.
+## What it does
+
+- **Creates the eDiscovery case** and stamps it with your DSAR reference, so
+  the same case list appears on any machine you sign in from — Microsoft Graph
+  is the source of truth and nothing is stored locally.
+- **Tracks the statutory clock.** One calendar month from the day the request
+  was *received* — not thirty days, and not from when someone opened the case.
+  The deadline and days remaining sit on the request list; a case with no
+  recorded receipt date says so rather than showing a guessed date.
+- **Shows what a naive search would miss.** The directory is asked who the
+  subject actually is — aliases, former names, employee ID — and both queries
+  are shown side by side, editable, before anything runs. The difference
+  between them is the demonstration.
+- **Narrows with reviewed templates** — an employment-file sweep, privilege
+  triage, third-party co-occurrence and more, each shipped in the image and
+  changed only by pull request, because a template decides the scope of
+  somebody's subject access response ([docs/TEMPLATES.md](docs/TEMPLATES.md)).
+- **Keeps a hash-chained audit trail** — who searched, when, refusals
+  included, with the subject appearing only as a case-scoped pseudonym. Any
+  edit or deletion is detectable and named by record.
+- **Produces a per-case evidence pack** a data protection officer can attach
+  to the response, refusing outright if the trail does not verify.
+
+The operator signs in as themselves; the tool can see nothing their own
+Purview permissions do not already allow, and holds no credential of its own.
 
 ---
 
-## Install and run
+## Install
 
-Nothing to clone, nothing to build, no Python needed on the host. Once, to
-record which registration to use (two GUIDs, neither a secret):
+`uv` is the only prerequisite — one static binary, no admin rights, no Python
+needed on the host, nothing cloned.
 
-```bash
+**Windows** (PowerShell):
+
+```powershell
+winget install astral-sh.uv
 uvx --from git+https://github.com/azurebeard/dsar-assist dsar init
-```
-
-Then, every time:
-
-```bash
 uvx --from git+https://github.com/azurebeard/dsar-assist dsar up
 ```
 
-`uv` itself is a single static binary that installs without admin rights
-(`curl -LsSf https://astral.sh/uv/install.sh | sh`, or `winget install
-astral-sh.uv` on Windows).
+**macOS / Linux:**
 
-The container is the second supported path, because relying on only one is how
-the predecessor's demo died:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar up
+```
+
+`init` runs once: it asks for the two GUIDs that identify your app
+registration (neither is a secret), validates them, and writes
+`~/.dsar/config.json` owner-only. Every run after that is just `up` — it
+starts the local server and opens the browser to sign in.
+
+**Container** — the second supported path, because relying on only one is how
+this tool's predecessor died on stage. Multi-arch (amd64 and arm64), signed,
+with SBOM and provenance attached:
 
 ```bash
 docker run --rm -p 127.0.0.1:8765:8765 \
@@ -47,27 +80,37 @@ docker run --rm -p 127.0.0.1:8765:8765 \
   ghcr.io/azurebeard/dsar-assist:latest
 ```
 
-From a clone, `./dsar up` (or `.\dsar.ps1 up` on Windows) picks whichever
-runtime is actually available. Environment variables override the config file
-if both are set.
+From a clone, `./dsar up` (macOS/Linux) or `.\dsar.ps1 up` (Windows) picks
+whichever runtime is available, preferring the container and falling back to
+`uv`.
 
 If anything is wrong, ask:
 
 ```bash
-./dsar doctor
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar doctor
 ```
 
 `doctor` names the problem and the fix. It prints the exact redirect URI to
 register, refuses to run if a secret-shaped environment variable is set, and
 states plainly that tokens live in memory only.
 
+### One-time tenant setup (an admin, once per tenant)
+
+The tool authenticates against an Entra app registration your tenant owns.
+`infra/entra/provision.sh` creates it idempotently: single-tenant, public
+client with PKCE, **zero credentials of any kind**, app roles
+(`DSAR.Operator`, `DSAR.Auditor`) with assignment required, and an app
+management policy that blocks anyone adding a secret later. Assign operators
+to a role, grant admin consent, and hand the two GUIDs to whoever runs
+`init`. Operators also need an eDiscovery role in Purview — the tool grants
+nothing and cannot elevate.
+
 ---
 
 ## Configuration
 
-Neither of the two required values is a secret. They identify a registration;
-they do not authorise anything. There is no setting for a client secret,
-because there is no code path that could consume one.
+`init` writes everything a desktop install needs. The full set, for scripting
+or for hosted mode — environment wins over the file:
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -81,13 +124,14 @@ because there is no code path that could consume one.
 | `DSAR_UAMI_CLIENT_ID` | hosted | User-assigned managed identity for the client assertion |
 | `DSAR_AUDIT_BLOB_URL` | hosted | Append-blob container for the audit trail |
 
-Values may also be written to `$DSAR_HOME/config.json`. Environment wins.
+Neither required value is a secret. There is no setting for a client secret,
+because there is no code path that could consume one.
 
-That file must not be writable by group or other — `tenant_id` selects the
-Entra tenant the operator signs in to, so whoever can write it chooses the
-identity provider. A default umask of `002` creates files group-writable, so
-after creating it by hand run `chmod 600 ~/.dsar/config.json`. The refusal
-names the file and the command.
+The config file must not be writable by group or other — `tenant_id` selects
+the Entra tenant the operator signs in to, so whoever can write it chooses the
+identity provider. `init` sets this correctly; if you write the file by hand
+on macOS or Linux, `chmod 600 ~/.dsar/config.json`. On Windows, NTFS
+inheritance applies and the check is not enforced.
 
 ---
 
@@ -102,15 +146,15 @@ names the file and the command.
 | One HTTP choke point | Exactly three modules may import an HTTP client, asserted by test |
 | Reproducible | `uv.lock` locks across all platform markers; CI fails on a stale lock |
 | Entry points work | The container's `ENTRYPOINT` *is* the console script, both entry points are asserted to agree, and a test greps these docs for commands that would not run on a fresh machine |
-| Container hardened | Non-root uid 10001, read-only root filesystem, `no-new-privileges`, all capabilities dropped, base images digest-pinned |
-| Audit trail protected | Directory forced to `0700` on create *and* when it already exists |
+| Container hardened | Distroless runtime — no shell, no package installer — non-root uid 10001, read-only root filesystem, all capabilities dropped, base images digest-pinned. Zero fixable findings, zero High or Critical |
+| Audit trail protected | Hash-chained, append-only by construction, directory forced to `0700`; two concurrent writers cannot fork it |
 | Requests observable | Logged by route template, never by concrete path — so 401s and 403s are visible without copying case identifiers into a second, ungoverned store |
 
 Each row exists because the predecessor lost it. The full reasoning is in
 [`docs/DESIGN.md`](docs/DESIGN.md), and
 **[`docs/CLAIMS.md`](docs/CLAIMS.md) names the test that fails when any of it
 stops being true** — because a guarantee with nothing checking it has been this
-project's most common defect, six times over.
+project's most common defect, seven times over.
 
 ---
 
@@ -154,11 +198,27 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   --sbom=true --provenance=true -t dsar-assist:dev .
 ```
 
+CI runs the full suite on Ubuntu, macOS and Windows on every push, plus a
+container smoke test under the real hardening flags and a blocking
+vulnerability scan.
+
 ---
 
 ## Status
 
-**Phase 0 complete** — the skeleton that ships. Portable, containerised,
-diagnosable, tested on three operating systems.
+**Desktop mode is the product, and it is complete**: case creation, the
+statutory clock, identity expansion and the query delta, templates, searches
+and estimates, export handoff, the audit trail and the evidence pack — 370
+tests, `mypy --strict`, three operating systems.
 
-Next: Phase 1, the identity plane. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+**Hosted mode is proven, then retired by choice.** It was deployed to Azure
+Container Apps with zero secrets — client authentication by federated
+credential from a managed identity, verified live — then torn down because
+desktop mode serves the current need at zero running cost. Every answer is
+recorded in [`verification/`](verification/), the archived audit trail
+verifies in-repo, and [`docs/DEPLOY-hosted.md`](docs/DEPLOY-hosted.md)
+rebuilds it in about thirty minutes when there is a team to serve.
+
+Security reviews, the threat model, and the software bill of materials are in
+[`docs/`](docs/). Working notes for contributors are in
+[`HANDOVER.md`](HANDOVER.md).
