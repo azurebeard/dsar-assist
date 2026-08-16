@@ -102,6 +102,23 @@ Each row exists because the predecessor lost it. The full reasoning is in
 
 ---
 
+## Narrowing a search
+
+Six query templates ship with the tool — a time window, a workload split, an
+employment-file sweep, privilege triage, third-party co-occurrence, and
+attachments. Each **narrows** the generated query; none replaces it.
+
+They are compiled in at build time from
+`src/dsar/identity/query_templates.json`, so adding one is a pull request
+against that file — and **that review is the control**. A template decides the
+scope of somebody's subject access response, and one that narrows too far
+under-discloses, which is a compliance failure rather than a cosmetic one.
+
+[`docs/TEMPLATES.md`](docs/TEMPLATES.md) documents the JSON shape and all six
+builders, with the real fragment each one produces.
+
+---
+
 ## Develop
 
 ```bash

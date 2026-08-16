@@ -40,111 +40,56 @@ inside the tool built to control that risk. Store a case-scoped pseudonym.
 
 ---
 
-## B-02 · Template builder — PARKED, shape decided
+## B-02 · Template builder ✅ DONE — it already existed 2026-08-14
 
-**Decision 2026-08-14:** parked as a runtime feature. If custom templates are
-wanted, they arrive as **JSON compiled in at build time** — a file in the repo,
-reviewed and shipped with the image.
+**Decision 2026-08-14:** parked as a runtime feature; if custom templates were
+wanted they would arrive as **JSON compiled in at build time**.
 
-That is a better shape than the runtime builder analysed below, for two reasons
-the analysis surfaced:
+**That mechanism already existed when the decision was taken.**
+`src/dsar/identity/query_templates.json` ships inside the wheel and the image
+— verified in the running container — `load_templates()` validates it at
+import, and 18 tests cover the shipped file. Adding a template has always been
+a pull request against that file.
 
-* **It deletes the persistence problem outright.** No local file to go missing
-  on the second machine, no new Graph consent to justify, no store that exists
-  in one mode and not the other. A template ships with the image, so every
-  operator running that image has it.
-* **It keeps the review gate.** The scope risk below is real — a template that
-  narrows too far under-discloses, and under-disclosure is a compliance
-  failure. A template arriving through a pull request gets read by someone
-  before it can shape a search. A template built at runtime does not.
+The only thing missing was **documentation saying so**: the sole mentions were
+this backlog entry and a WS10 review. Closed by `docs/TEMPLATES.md`, which
+documents the JSON shape and all six builders with the real fragment each one
+produces, plus a README pointer.
 
-The cost is that an operator cannot invent one mid-request, which is the right
-trade for an artefact that decides what a subject access response contains.
+Two tests keep it honest in both directions — every builder in `_BUILDERS`
+must appear in the docs, and every builder documented must exist. Proven by
+tampering: an undocumented seventh builder fails, and a documented ghost fails.
 
-The analysis below is kept because it is what led to that decision, and because
-the scope and trust problems still apply to a build-time file.
+The analysis that led to the decision is worth keeping, because the scope and
+trust problems still apply to a build-time file.
 
-**Size if revisited:** 2–3 days · **Requested:** 2026-08-14
-
-Let an operator compose their own narrowing, name it, and reuse it — so a
-recurring shape of request (employment grievance, third-party disclosure, a
-particular regulator's format) becomes one click instead of a rebuild.
-
-Genuinely valuable. Repeatability is what turns a demo into something used
-weekly. Three design problems to solve first, and the form is not one of them.
-
-### The hard part is persistence, not the form
+### The hard part was persistence, not the form
 
 The architecture's central property is **no durable local state — Graph is the
-source of truth**. That is the defect this project exists to fix. A
-user-built template must live somewhere, and every obvious option costs
-something:
+source of truth**. A user-built template must live somewhere, and every option
+costs something: a local file recreates the original sin; SharePoint or
+OneDrive needs `Files.ReadWrite` or `Sites.ReadWrite.All`, a large consent
+expansion for a tool whose pitch is a minimal permission set; an Entra
+extension property puts config in an identity object; blob storage works
+hosted and not on the desktop, so the feature would exist in one mode only.
 
-| Where | Cost |
-|---|---|
-| Local file | Recreates the original sin. A template built on the laptop is invisible on the Mac, which is exactly the failure that killed the predecessor |
-| SharePoint list / OneDrive file | Needs `Files.ReadWrite` or `Sites.ReadWrite.All` — a large consent expansion for a tool whose pitch is a minimal permission set. Hard to justify to the reviewer who approved two scopes |
-| Entra extension property on the app | Awkward, size-limited, and puts config in an identity object |
-| Azure Table or blob | Works hosted, not on the desktop — so the feature would exist in one mode only |
-| **Export / import JSON** | **No new permissions, travels as a file, and can be reviewed before it is trusted** |
+A file in the repository removes the problem instead of solving it — it is
+present on every machine running that image, because it *is* the image.
 
-**Recommended: export/import JSON first.** The operator builds a template,
-exports it, and it travels the way any other artefact does — attached to a
-ticket, committed to a repo, sent to a colleague. A tenant-side store can come
-later if the file version proves too clumsy, and by then there will be evidence
-about which store is worth the consent.
+### Templates generate queries, which is a scope risk
 
-It also answers "patch it back to the app" directly: an exported template is a
-JSON object in the same shape as `query_templates.json`, so a good one can be
-raised as a pull request and become a built-in.
+Not injection — `compose()` parenthesises both sides and `quote_phrase` refuses
+anything that cannot be expressed — but **correctness**, which for a DSAR is
+worse. A template that widens returns material outside the request; one that
+narrows **under-discloses**.
 
-### The second problem is that templates generate queries
+We met this exact trap: the `workload` narrowing sets `kind:email`, which drops
+the site count to zero. A shipped template carries a caution and a
+`mailbox_only` flag the interface acts on. A user-built one would carry
+neither.
 
-A user-built template is user-supplied query construction. Not a code injection
-risk — `compose()` parenthesises both sides and `quote_phrase` refuses anything
-that cannot be expressed — but a **correctness and scope** risk, which for a
-DSAR is worse:
-
-- A template that widens the search returns material outside the request.
-- A template that narrows it **under-discloses**, and under-disclosure is a
-  compliance failure rather than a cosmetic one.
-
-We have already met this exact trap: the `workload` narrowing sets `kind:email`,
-which drops the site count to zero. A built-in template carries a caution about
-it. A user-built one would not, unless the builder makes them write one.
-
-**So the builder must compose from the vetted primitives, not accept raw KQL.**
-The five existing builders — `date_range`, `choice`, `phrase_or`, `people_or`,
-`filetypes` — are the vocabulary. A user picks one, supplies terms, names the
-template and writes its guidance. Raw KQL stays in the editable query box where
-it already is, in front of the operator, per-request.
-
-If raw KQL is ever allowed in a saved template, it needs a visible marker on
-every query built from it, because a saved query is one nobody reads again.
-
-### The third problem is trust
-
-An imported template is a file from somewhere. It must be shown before it is
-used — name, builder, terms, and the exact fragment it will contribute — and
-imported explicitly rather than applied on load. Structural validation on
-import: known builder, known input kinds, bounded lengths, no unexpected keys.
-
-### Sketch
-
-```
-GET  /api/templates              built-in + imported, marked by origin
-POST /api/templates/preview      build it, return the fragment, save nothing
-POST /api/templates/import       validate and add to the session
-POST /api/templates/export       the JSON, for a file or a pull request
-```
-
-Session-scoped first. A template that survives sign-out is durable local state
-by another name, and that decision deserves its own review rather than arriving
-as a side effect.
-
-**Recommendation: after B-01.** A half-built template builder is worse than
-none for the demo, and B-01 closes a gap that is already written down in two
-security reviews.
+So the builders are the vocabulary. Raw KQL stays in the editable query box, in
+front of the operator, per request — a saved query is one nobody reads again.
 
 ---
 

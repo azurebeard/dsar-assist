@@ -235,3 +235,47 @@ def test_the_api_surfaces_the_flag_the_interface_acts_on() -> None:
     assert status == 200
     marked = {t["id"] for t in payload["templates"] if t["mailbox_only"]}
     assert marked == MAILBOX_ONLY
+
+
+def test_every_builder_is_documented() -> None:
+    """`docs/TEMPLATES.md` must describe every builder that exists.
+
+    Templates are compiled in at build time, so adding one is a pull request —
+    and that review is the control, because a narrowing that is too tight
+    under-discloses. A review is only a control if the reviewer can see what
+    the builders do, which means the documentation cannot silently rot when a
+    seventh builder lands.
+
+    This project has six recorded instances of a stated guarantee with no check
+    behind it. This is the check.
+    """
+    from dsar.identity.templates import _BUILDERS
+
+    docs = (Path(__file__).resolve().parent.parent / "docs" / "TEMPLATES.md").read_text(
+        encoding="utf-8"
+    )
+    missing = [name for name in _BUILDERS if f"`{name}`" not in docs]
+    assert missing == [], f"builders with no entry in docs/TEMPLATES.md: {missing}"
+
+
+def test_every_documented_builder_exists() -> None:
+    """And the reverse, so the docs cannot describe a builder that was removed.
+
+    A reader following documentation for something that no longer exists is the
+    predecessor's failure #4 in miniature — every line of its docs assumed a
+    console script nobody had installed.
+    """
+    import re
+
+    from dsar.identity.templates import _BUILDERS
+
+    docs = (Path(__file__).resolve().parent.parent / "docs" / "TEMPLATES.md").read_text(
+        encoding="utf-8"
+    )
+    # The builders are the `### `name`` headings — the section per builder.
+    documented = set(re.findall(r"^### `([a-z_]+)`$", docs, re.M))
+    unknown = documented - set(_BUILDERS)
+    assert unknown == set(), f"documented but not implemented: {sorted(unknown)}"
+    assert documented == set(_BUILDERS), (
+        f"missing a section: {sorted(set(_BUILDERS) - documented)}"
+    )
