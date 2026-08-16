@@ -57,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
     audit_verify.add_argument(
         "--json", action="store_true", dest="as_json", help="machine-readable"
     )
+    audit_evidence = audit_sub.add_parser(
+        "evidence", help="the per-case pack a data protection officer attaches"
+    )
+    audit_evidence.add_argument("case_id", help="the Purview case id")
+    audit_evidence.add_argument(
+        "--json", action="store_true", dest="as_json", help="machine-readable"
+    )
+
     audit_tail = audit_sub.add_parser("tail", help="show the most recent records")
     audit_tail.add_argument(
         "-n", type=int, default=20, dest="count", help="how many (default 20)"
@@ -88,6 +96,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_doctor(offline=args.offline, as_json=args.as_json)
 
     if args.command == "audit":
+        if getattr(args, "audit_command", None) == "evidence":
+            from dsar.audit.report import run_evidence
+
+            return run_evidence(args.case_id, as_json=getattr(args, "as_json", False))
+
         from dsar.audit.report import run_audit
 
         return run_audit(

@@ -93,6 +93,12 @@ whose table was never rebuilt. This is that table.
 | INV-23 | Two writers cannot corrupt the chain | SEC-H-01, `audit/blob.py` | `test_two_writers_during_a_rollout_do_not_corrupt_the_trail` | test |
 | INV-24 | The verifier reads the trail the deployment actually writes | SEC report, `audit/report.py` | `test_audit_verify_reads_the_blob_when_hosted` | test |
 | INV-25 | Tampering is detected and the break is named by `seq` | `README.md`, `THREAT-MODEL.md` | `test_a_tampered_remote_record_is_still_caught` | test |
+| INV-64 | A field added after the first record was written does not invalidate existing hashes | `audit/record.py` | `test_a_record_written_before_case_id_existed_still_verifies` | test |
+| INV-65 | An added field is still covered by the hash once populated | `audit/record.py` | `test_a_populated_case_id_is_covered_by_the_hash` | test |
+| INV-66 | The trail can answer "what happened to this case" | `audit/evidence.py` | `test_one_case_filter_returns_the_whole_story` | test |
+| INV-67 | The evidence pack verifies the whole chain, never a subset | `audit/evidence.py` | `test_it_verifies_the_whole_chain_not_the_extract` | test |
+| INV-68 | A tampered trail yields no trustworthy extract | `audit/evidence.py` | `test_a_tampered_trail_yields_no_trustworthy_extract` | test |
+| INV-69 | The evidence pack carries no subject data | `audit/evidence.py` | `test_the_pack_never_carries_subject_data` | test |
 
 ## The container and the deployment
 
