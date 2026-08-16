@@ -254,22 +254,43 @@ on purpose.
 
 ---
 
-## B-13 · Redeploy — the SEC-H-01 fix is not live
+## B-13 · Redeploy ✅ DONE 2026-08-16
 
-**Size:** 5 minutes · **Do this before the next deploy, not after**
+The running image was `0b44c168`, five commits behind, and the SEC-H-01
+conditional-append fix was in an image nobody was running.
 
-The running container is `sha256:0b44c168…`; latest is `562de4bf…`. The
-conditional-append fix is in the image nobody is running.
+**It landed with no rollout window at all.** The container app had been
+stopped, so updating the image created revision `0000007` against zero
+replicas — no two processes, no contended append, and none of the risk the
+backlog entry warned about. The awkward ordering it described (the fix's own
+deployment being the last one that could fork the trail) did not arise.
 
-The order matters and it is slightly awkward: deploying the fix is itself a
-rolling deployment, so it is the **last one that can fork the trail**. Verify
-the chain immediately after, and if it broke, that is the known cause rather
-than a new one.
+The app is **left stopped**, as it was found.
 
-```bash
-az containerapp update -n ca-dsar-prod-uks-01 -g rg-dsar-prod-uks-01 \
-  --image ghcr.io/azurebeard/dsar-assist@<latest digest>
-```
+### The live trail survived every unprotected rollout
+
+Read back before deploying: **23 records, sequence 1..23, no duplicates, chain
+intact.** So the window SEC-H-01 identified was real but never realised —
+nobody was writing during a rollout.
+
+It also proved the hash-compatibility design on real data rather than in a
+unit test: all 23 records were written before `case_id` existed, carry no value
+for it, and **verify under the new code**. That is the strongest available
+evidence that `ADDED_AFTER_V1` does not invalidate an existing trail.
+
+### Two things learned by doing it
+
+**A `CanNotDelete` lock blocks role-assignment removal at that scope**, not
+just resource deletion. Revoking a temporary Storage Blob Data Reader grant
+failed with `ScopeLocked` and required removing the lock, revoking, and
+restoring it. Worth knowing before someone needs to remove an access grant in
+a hurry: the lock added for SEC-M-03 makes RBAC cleanup a three-step operation.
+
+**And a shell lesson.** The first revoke reported success because
+`az ... | tail -1 && echo revoked` exits on `tail`, not on `az`. The command
+lied about the outcome and the role stayed assigned. `set -o pipefail` — the
+same fix as the `pytest | tail` incident in `HANDOVER.md` §7, which is now
+twice.
 
 ---
 
