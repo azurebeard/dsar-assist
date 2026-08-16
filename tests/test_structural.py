@@ -1008,3 +1008,24 @@ def test_no_tenant_specific_identifier_is_committed() -> None:
         "a real tenant identifier is committed to a public repository; "
         "use the placeholder and put the value in LOCAL.md"
     )
+
+
+def test_the_statutory_arithmetic_is_pure() -> None:
+    """`deadline.py` produces a **statutory date**, so it must be provable at a
+    glance and testable without a tenant.
+
+    No network, no filesystem, no configuration, and no clock — `today` is
+    passed in, so a deadline test cannot pass in August and fail in September.
+    A dependency here would be a dependency in the one calculation whose
+    wrongness is a compliance failure rather than a bug.
+    """
+    tree = ast.parse((REPO_ROOT / "src/dsar/cases/deadline.py").read_text("utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+
+    permitted = {"__future__", "calendar", "dataclasses", "datetime"}
+    assert imported <= permitted, f"deadline.py imports {sorted(imported - permitted)}"

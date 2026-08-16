@@ -12,8 +12,11 @@ identical counts is what eventually surfaced it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Mapping
 
+from dsar.cases.deadline import Deadline, deadline_for
+from dsar.cases.received import decode_received
 from dsar.cases.reference import decode_reference
 
 __all__ = ["Case", "Search", "Statistics", "parse_case", "parse_search"]
@@ -33,10 +36,25 @@ class Case:
     #: The boundary is Purview RBAC, which this tool does not control.
     created_by_oid: str = ""
     created_by_name: str = ""
+    #: When the request was RECEIVED, decoded from the case description. Not
+    #: `created`, which is when somebody opened a case in Purview — always
+    #: later, and the statutory clock runs from receipt. `None` when the case
+    #: predates this, or when the marker was edited away in the portal.
+    received: date | None = None
 
     @property
     def is_ours(self) -> bool:
         return self.reference is not None
+
+    def deadline(self, today: date) -> Deadline | None:
+        """The statutory deadline, or `None` when no receipt date is recorded.
+
+        Never guesses from `created`. A plausible wrong statutory date is the
+        one outcome this must not produce.
+        """
+        if self.received is None:
+            return None
+        return deadline_for(self.received, today)
 
 
 @dataclass(frozen=True)
@@ -91,6 +109,7 @@ def parse_case(raw: Mapping[str, Any]) -> Case:
         created=str(raw.get("createdDateTime", "")),
         created_by_oid=str(user.get("id", "")),
         created_by_name=str(user.get("displayName", "")),
+        received=decode_received(raw.get("description")),
     )
 
 

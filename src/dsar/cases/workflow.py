@@ -18,12 +18,14 @@ seen.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from dataclasses import dataclass
 
 from dsar.audit.record import Action, Outcome
 from dsar.audit.trail import AuditTrail
 from dsar.auth.provider import Principal
 from dsar.cases.model import Case, Search, parse_case, parse_search
+from dsar.cases.received import encode_received
 from dsar.cases.reference import encode_reference
 from dsar.graph.operations import GraphOperations
 from dsar.identity.expand import (
@@ -116,7 +118,12 @@ class Workflow:
 
     # ------------------------------------------------------------------ case
 
-    def create_case(self, reference: str, description: str = "") -> Case:
+    def create_case(
+        self,
+        reference: str,
+        description: str = "",
+        received: date | None = None,
+    ) -> Case:
         """Create an eDiscovery case carrying the DSAR reference.
 
         The reference goes in `externalId`, which is what makes the case
@@ -130,12 +137,14 @@ class Workflow:
         # then leaves an `attempted` with no `ok`, which is a visible shape
         # rather than a silent absence.
         self._record(Action.CASE_CREATED, Outcome.ATTEMPTED, detail=reference)
+        # The received date rides in the description, because it is the only
+        # writable field on an ediscoveryCase not already carrying something
+        # and there is deliberately no `update_case`. Write-once, exactly like
+        # the reference — see `cases/received.py`.
         response = self._ops.create_case(
             display_name=reference,
             external_id=external_id,
-            description=description
-            or "Raised via DSAR Assist. Control plane only; no item content is "
-            "downloaded by this tool.",
+            description=encode_received(received, description),
         )
         case = parse_case(response.body)
         self._record(

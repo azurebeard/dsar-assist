@@ -224,7 +224,8 @@
         tr.appendChild(el("td", item.reference || "—"));
         tr.appendChild(el("td", item.display_name || ""));
         tr.appendChild(el("td", item.status || ""));
-        tr.appendChild(el("td", (item.created || "").slice(0, 10)));
+        tr.appendChild(el("td", item.received || "—"));
+        tr.appendChild(dueCell(item));
 
         const actions = document.createElement("td");
         const open = el("button", "Open", "linklike");
@@ -267,7 +268,12 @@
       const epoch = state.viewEpoch;
       status("Creating the eDiscovery case in Microsoft Purview\u2026", true, epoch);
       try {
-        const result = await api("/api/case/create", { reference });
+        const result = await api("/api/case/create", {
+          reference,
+          // Empty means "not recorded"; a malformed one is refused by the
+          // server rather than silently dropped.
+          received: $("received").value,
+        });
         if (result.status !== 201) {
           return fail(result.payload, "The case could not be created.");
         }
@@ -848,6 +854,33 @@
       setText("case-portal", "Collect exports in the Microsoft Purview portal: " + payload.portal_url);
       return complete && rows.length > 0;
     } catch (err) { return true; }
+  }
+
+  // The statutory deadline, or an honest gap. A case with no recorded receipt
+  // shows "not recorded" rather than a date derived from when somebody opened
+  // the case in Purview — that is always later than the truth, and a plausible
+  // wrong statutory date is the one thing this must not show.
+  function dueCell(item) {
+    if (!item.due) {
+      const cell = el("td", "not recorded", "muted");
+      cell.title = "No received date on this case. The clock runs from the day "
+        + "the request arrived, which this tool cannot infer.";
+      return cell;
+    }
+    const days = item.days_remaining;
+    let text = item.due;
+    if (item.overdue) {
+      text += "  \u00b7  overdue by " + (-days) + " day" + (days === -1 ? "" : "s");
+    } else if (days === 0) {
+      text += "  \u00b7  due today";
+    } else {
+      text += "  \u00b7  " + days + " day" + (days === 1 ? "" : "s") + " left";
+    }
+    const cell = el("td", text);
+    // Overdue, and the last week before it, share the existing warn colour
+    // rather than introducing a third state to learn.
+    if (item.overdue || days <= 7) cell.className = "warn";
+    return cell;
   }
 
   function renderDelta(rows) {

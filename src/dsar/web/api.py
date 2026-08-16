@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Mapping
 
 from dsar.auth.errors import ClaimsChallenge, NotAssigned, ReauthRequired
 from dsar.auth.provider import Principal
+from dsar.cases.model import Case
 from dsar.cases.reference import InvalidReference
 from dsar.cases.service import CaseScope, CaseService
 from dsar.cases.workflow import (
@@ -131,6 +133,9 @@ def _requests(ctx: Context) -> ApiResult:
     listing = ctx.cases.list_requests(
         ctx.principal, scope=scope, force=bool(ctx.body.get("refresh"))
     )
+    # Read once per request, so every row in one response is measured against
+    # the same day. Computing it per case would let a list straddle midnight.
+    today = datetime.now(timezone.utc).date()
     return 200, {
         "scope": scope.value,
         # Whether offering the toggle is useful at all: if every visible case
@@ -146,6 +151,10 @@ def _requests(ctx: Context) -> ApiResult:
                 "status": case.status,
                 "created": case.created,
                 "created_by": case.created_by_name,
+                # The deadline, or nothing. Never derived from `created` — a
+                # plausible wrong statutory date is the one outcome this must
+                # not produce, so a case with no recorded receipt shows a gap.
+                **_deadline_json(case, today),
                 "mine": (not case.created_by_oid)
                 or case.created_by_oid == ctx.principal.oid,
                 "portal_url": purview_case_url(case.id, ctx.config.tenant_id),
@@ -195,6 +204,18 @@ def _templates(ctx: Context) -> ApiResult:
     }
 
 
+def _deadline_json(case: Case, today: date) -> dict[str, Any]:
+    deadline = case.deadline(today)
+    if deadline is None:
+        return {"received": None, "due": None, "days_remaining": None, "overdue": False}
+    return {
+        "received": deadline.received.isoformat(),
+        "due": deadline.due.isoformat(),
+        "days_remaining": deadline.days_remaining,
+        "overdue": deadline.overdue,
+    }
+
+
 def _case_detail(ctx: Context) -> ApiResult:
     case_id = ctx.text("case_id")
     if not case_id:
@@ -230,14 +251,38 @@ def _statistics(ctx: Context) -> ApiResult:
 
 def _create_case(ctx: Context) -> ApiResult:
     reference = ctx.text("reference")
-    case = ctx.workflow.create_case(reference, ctx.text("description"))
+    # Optional, and refused rather than guessed if it is not a date. The clock
+    # runs from receipt; `createdDateTime` is when somebody opened the case,
+    # which is always later.
+    received = _received_date(ctx.text("received"))
+    case = ctx.workflow.create_case(reference, ctx.text("description"), received)
     ctx.cases.invalidate()  # the list is a cache; a new case must appear at once
     return 201, {
         "case_id": case.id,
         "reference": case.reference,
         "display_name": case.display_name,
+        "received": received.isoformat() if received else None,
         "portal_url": purview_case_url(case.id, ctx.config.tenant_id),
     }
+
+
+def _received_date(raw: str) -> date | None:
+    """Parse an operator-supplied receipt date, or refuse it.
+
+    Empty is fine — the received date is optional and its absence shows as
+    "not recorded". A malformed one is NOT fine: silently dropping it would
+    produce a case that looks like it has no receipt date when the operator
+    believes they gave one, and the deadline would quietly not exist.
+    """
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise InvalidReference(
+            f"the received date must be YYYY-MM-DD, got {raw!r}. The statutory "
+            f"clock runs from the day the request arrived."
+        ) from exc
 
 
 def _expand(ctx: Context) -> ApiResult:

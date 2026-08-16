@@ -53,7 +53,7 @@
     </p>
     <table id="requests-table" hidden>
       <thead>
-        <tr><th>Reference</th><th>Case</th><th>Status</th><th>Created</th><th></th></tr>
+        <tr><th>Reference</th><th>Case</th><th>Status</th><th>Received</th><th>Due</th><th></th></tr>
       </thead>
       <tbody id="requests-body"></tbody>
     </table>
@@ -76,6 +76,21 @@
         Stored on the case so it can be found from any machine, and shown in the
         Purview portal.
       </p>
+
+      <label for="received">Date received</label>
+      <input id="received" type="date" autocomplete="off">
+      <p class="muted small">
+        The day the request arrived — not today, unless it arrived today. The
+        statutory clock is <strong>one calendar month from receipt</strong>, so
+        this is what the deadline is calculated from.
+      </p>
+      <p class="warn small">
+        Recorded once, when the case is created, and not editable here. To
+        correct it afterwards, edit the case description in the Purview portal.
+        Leave it blank and the deadline shows as not recorded rather than being
+        guessed from the creation date.
+      </p>
+
       <button id="create-case" class="button" type="button">Create case</button>
       <p id="case-created" class="ok small" hidden></p>
     </fieldset>
