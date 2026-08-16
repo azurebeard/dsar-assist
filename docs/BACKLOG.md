@@ -309,6 +309,48 @@ on purpose.
 
 ---
 
+## B-13 · Redeploy — the SEC-H-01 fix is not live
+
+**Size:** 5 minutes · **Do this before the next deploy, not after**
+
+The running container is `sha256:0b44c168…`; latest is `562de4bf…`. The
+conditional-append fix is in the image nobody is running.
+
+The order matters and it is slightly awkward: deploying the fix is itself a
+rolling deployment, so it is the **last one that can fork the trail**. Verify
+the chain immediately after, and if it broke, that is the known cause rather
+than a new one.
+
+```bash
+az containerapp update -n ca-dsar-prod-uks-01 -g rg-dsar-prod-uks-01 \
+  --image ghcr.io/azurebeard/dsar-assist@<latest digest>
+```
+
+---
+
+## B-14 · B-04, and it is the pattern for the sixth time
+
+**Size:** ~30 minutes · **Closes:** B-04 permanently
+
+`msal_client.py` says: *"`doctor` reads `xms_cc` back off the issued token,
+because declaring a capability and having the STS agree are different things."*
+
+`rg xms_cc src/` returns **that comment and nothing else**. Nothing reads it.
+A stated guarantee with no check behind it — the sixth instance, after
+SEC-H-02, the `innerHTML` rule, the pip guard, the replica assertion, and the
+credential assertion that covered one registration.
+
+It is not a `doctor` check: `doctor` has no session and therefore no ID token.
+It belongs in `claims.py`, beside the `uti` already captured — take `xms_cc`,
+surface it on `/api/whoami` and in the sign-in audit record. Then **the next
+sign-in answers it**, and every sign-in after that re-answers it, instead of
+one manual observation being carried as fact.
+
+Until then: **do not claim near-real-time revocation.** `cp1` is declared and
+its negotiation is unobserved.
+
+---
+
 ## B-12 · WS10 hosted — what is left, and it is all yours
 
 `docs/WS10-review-hosted-2026-08-14.md` · **APPROVED WITH CONDITIONS**.
