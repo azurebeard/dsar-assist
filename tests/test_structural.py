@@ -23,6 +23,9 @@ from pathlib import Path
 from conftest import REPO_ROOT
 
 EXCLUDED_DIRS = {
+    # The project's private working notes — its own git repository, ignored by
+    # this one. Scanning it would re-import the identifiers it exists to hold.
+    "local",
     ".git",
     ".venv",
     "venv",
@@ -994,9 +997,16 @@ def test_no_tenant_specific_identifier_is_committed() -> None:
     # are where these values were published. Written out because the first
     # version of this test used the default file list, passed, and was proven
     # by tampering to catch nothing at all.
+    # `.jsonl` included explicitly. It is not in SOURCE_EXTS, and that blind
+    # spot let a 23-record audit trail carrying the operator UPN and tenant id
+    # into the public tree unscanned (verification/hosted-trail-archive/, now
+    # in local/). The scan must cover every text format the repo actually
+    # holds, not the ones it held when the scan was written.
     files = [
         path
-        for path in _source_files() + sorted(REPO_ROOT.rglob("*.md"))
+        for path in _source_files()
+        + sorted(REPO_ROOT.rglob("*.md"))
+        + sorted(REPO_ROOT.rglob("*.jsonl"))
         # Gitignored, and it is the one place these values are supposed to be.
         if path.name != "LOCAL.md"
         and not any(part in EXCLUDED_DIRS for part in path.relative_to(REPO_ROOT).parts)

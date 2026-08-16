@@ -15,6 +15,13 @@ build/
 # privileged account, which is reconnaissance rather than a credential.
 LOCAL.md
 
+# The project's working notes: handover, backlog, roadmap, security review
+# working documents, and the archived hosted audit trail (which carries the
+# real tenant identifiers). A standalone git repository of its own, committed
+# locally and never pushed — the public repository is the product, this is the
+# project.
+local/
+
 # Never commit anything that could carry tenant state or credentials.
 # Backstops, not the primary control — the design has no secret to leak.
 .env

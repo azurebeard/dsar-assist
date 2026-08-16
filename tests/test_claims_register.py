@@ -114,11 +114,21 @@ def test_every_row_names_an_enforcement() -> None:
 def test_an_open_claim_names_a_real_backlog_item() -> None:
     """An unenforced claim has to point somewhere. Otherwise `open` becomes a
     way of writing "we know" and never doing anything about it."""
-    backlog = (REPO_ROOT / "docs" / "BACKLOG.md").read_text(encoding="utf-8")
+    open_rows = [row for row in _rows() if row[4].lower() == "open"]
+    if not open_rows:
+        return  # nothing to point anywhere
+
+    # The backlog lives in the project's private working notes (local/), which
+    # is its own repository. An open claim must still point at a real item
+    # there — read lazily, so a register with no open rows needs no backlog.
+    backlog_path = REPO_ROOT / "local" / "docs" / "BACKLOG.md"
+    assert backlog_path.exists(), (
+        "the register has open rows but local/docs/BACKLOG.md does not exist "
+        "on this machine — open claims must be traceable to a backlog item"
+    )
+    backlog = backlog_path.read_text(encoding="utf-8")
     dangling: list[str] = []
-    for inv, _claim, _stated, enforced, kind in _rows():
-        if kind.lower() != "open":
-            continue
+    for inv, _claim, _stated, enforced, kind in open_rows:
         items = re.findall(r"\bB-\d+\b", enforced)
         if not items:
             dangling.append(f"{inv} is open and names no backlog item")

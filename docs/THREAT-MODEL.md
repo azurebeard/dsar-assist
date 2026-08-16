@@ -214,6 +214,7 @@ Each of these would invalidate a claim above and needs a fresh review:
 
 ## Reviews
 
-`WS10-review-2026-08-14.md` (Phase 0) · `WS10-review-phases1-4-2026-08-14.md` ·
-`OWASP-top10-2026-08-14.md` · `WS10-review-comparability-2026-08-14.md`. Every finding across all three is closed; the open
-items are in `BACKLOG.md`.
+A security review runs before any change to the surfaces above is finalised.
+The review working documents are maintained privately; every finding they
+raised is either closed by a test named in [`CLAIMS.md`](CLAIMS.md) or stated
+in this document as an accepted residual.

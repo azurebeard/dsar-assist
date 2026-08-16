@@ -12,7 +12,7 @@ anywhere. The app registration requests Microsoft Graph and nothing else — the
 separate resource that carries the eDiscovery download permission is never
 named in this codebase — no download or preview call exists in the permitted
 operations table, and the operator collects exports from the Purview portal
-under their own identity. All three facts are asserted structurally at every
+under their own identity. All three facts are asserted by tests at every
 commit, and `doctor` re-proves the first at runtime by inspecting the scopes on
 the issued token.
 
@@ -28,7 +28,7 @@ the issued token.
 - **Shows what a naive search would miss.** The directory is asked who the
   subject actually is — aliases, former names, employee ID — and both queries
   are shown side by side, editable, before anything runs. The difference
-  between them is the demonstration.
+  between them is what the expansion found.
 - **Narrows with reviewed templates** — an employment-file sweep, privilege
   triage, third-party co-occurrence and more, each shipped in the image and
   changed only by pull request, because a template decides the scope of
@@ -67,12 +67,10 @@ uvx --from git+https://github.com/azurebeard/dsar-assist dsar up
 
 `init` runs once: it asks for the two GUIDs that identify your app
 registration (neither is a secret), validates them, and writes
-`~/.dsar/config.json` owner-only. Every run after that is just `up` — it
-starts the local server and opens the browser to sign in.
+`~/.dsar/config.json` owner-only. Every run after that is just `up`.
 
-**Container** — the second supported path, because relying on only one is how
-this tool's predecessor died on stage. Multi-arch (amd64 and arm64), signed,
-with SBOM and provenance attached:
+**Container** — the second supported path. Multi-arch (amd64 and arm64),
+signed, with SBOM and provenance attached:
 
 ```bash
 docker run --rm -p 127.0.0.1:8765:8765 \
@@ -81,8 +79,7 @@ docker run --rm -p 127.0.0.1:8765:8765 \
 ```
 
 From a clone, `./dsar up` (macOS/Linux) or `.\dsar.ps1 up` (Windows) picks
-whichever runtime is available, preferring the container and falling back to
-`uv`.
+whichever runtime is available.
 
 If anything is wrong, ask:
 
@@ -90,9 +87,8 @@ If anything is wrong, ask:
 uvx --from git+https://github.com/azurebeard/dsar-assist dsar doctor
 ```
 
-`doctor` names the problem and the fix. It prints the exact redirect URI to
-register, refuses to run if a secret-shaped environment variable is set, and
-states plainly that tokens live in memory only.
+`doctor` names the problem and the fix — including the exact redirect URI to
+register.
 
 ### One-time tenant setup (an admin, once per tenant)
 
@@ -107,10 +103,61 @@ nothing and cannot elevate.
 
 ---
 
+## Use
+
+`up` starts a local server on `http://localhost:8765` and opens the browser.
+Sign in with your Microsoft account; the roles you hold are shown next to
+your name.
+
+**Handle a request:**
+
+1. **New request** — enter the DSAR reference from your ticketing system and
+   the date the request was **received**. The received date drives the
+   statutory deadline and is written once, at creation; leave it blank and the
+   deadline shows as *not recorded* rather than being guessed.
+2. **Resolve the subject** — primary email, plus anything the directory cannot
+   know: nicknames, former names, a personal address from the request itself.
+   Two queries come back: *naive* (primary address only) and *expanded*
+   (everything the directory and you supplied). Both are editable, and nothing
+   runs until you say so.
+3. **Narrow if needed** — the template panel stacks reviewed narrowings onto
+   the queries. Apply to *both* unless you mean otherwise; the tool warns when
+   the two queries stop being comparable, and when a narrowing counts only
+   mailbox content.
+4. **Run both searches** and leave the page — it polls on its own. Estimates
+   land with item and location counts, and the difference between the two
+   searches is what the naive query would have missed.
+5. **Export** — starts in Purview; you collect the results from the Purview
+   portal under your own identity. This tool never touches item content.
+
+**Requests list** shows every case this tool created, from any machine, with
+status, received date, and the deadline — overdue and due-soon highlighted.
+
+**The audit trail** records every action, including refusals, with the
+subject as a case-scoped pseudonym — never their name or the query text:
+
+```bash
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar audit verify
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar audit tail
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar audit evidence <case-id>
+```
+
+`verify` recomputes the hash chain and names the first break if anything was
+altered. `evidence` produces the per-case pack — who searched, what was
+searched, when, with the chain verification attached — and refuses to produce
+one from a trail that does not verify. Both work offline: the record survives
+even when the case list (which *is* Microsoft Graph) is unreachable.
+
+**Roles:** `DSAR.Operator` can do everything above. `DSAR.Auditor` can see
+cases and read the trail, and is refused anything that creates or exports —
+and the refusal itself is recorded.
+
+---
+
 ## Configuration
 
-`init` writes everything a desktop install needs. The full set, for scripting
-or for hosted mode — environment wins over the file:
+`init` writes everything a desktop install needs. The full set — environment
+wins over the file:
 
 | Variable | Required | Meaning |
 |---|---|---|
@@ -133,6 +180,10 @@ identity provider. `init` sets this correctly; if you write the file by hand
 on macOS or Linux, `chmod 600 ~/.dsar/config.json`. On Windows, NTFS
 inheritance applies and the check is not enforced.
 
+Hosted mode — the same image on Azure Container Apps, with no secret anywhere
+and the audit trail in an append blob — is documented in
+[`docs/DEPLOY-hosted.md`](docs/DEPLOY-hosted.md).
+
 ---
 
 ## How it is built
@@ -150,28 +201,11 @@ inheritance applies and the check is not enforced.
 | Audit trail protected | Hash-chained, append-only by construction, directory forced to `0700`; two concurrent writers cannot fork it |
 | Requests observable | Logged by route template, never by concrete path — so 401s and 403s are visible without copying case identifiers into a second, ungoverned store |
 
-Each row exists because the predecessor lost it. The full reasoning is in
-[`docs/DESIGN.md`](docs/DESIGN.md), and
-**[`docs/CLAIMS.md`](docs/CLAIMS.md) names the test that fails when any of it
-stops being true** — because a guarantee with nothing checking it has been this
-project's most common defect, seven times over.
-
----
-
-## Narrowing a search
-
-Six query templates ship with the tool — a time window, a workload split, an
-employment-file sweep, privilege triage, third-party co-occurrence, and
-attachments. Each **narrows** the generated query; none replaces it.
-
-They are compiled in at build time from
-`src/dsar/identity/query_templates.json`, so adding one is a pull request
-against that file — and **that review is the control**. A template decides the
-scope of somebody's subject access response, and one that narrows too far
-under-discloses, which is a compliance failure rather than a cosmetic one.
-
-[`docs/TEMPLATES.md`](docs/TEMPLATES.md) documents the JSON shape and all six
-builders, with the real fragment each one produces.
+[`docs/CLAIMS.md`](docs/CLAIMS.md) maps every guarantee to the test that fails
+when it stops being true. The design reasoning is in
+[`docs/DESIGN.md`](docs/DESIGN.md), the threat model in
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md), and the software bill of
+materials in [`docs/SBOM.md`](docs/SBOM.md).
 
 ---
 
@@ -184,14 +218,13 @@ uv run mypy
 uv run dsar doctor --offline
 ```
 
-Structural invariants run first and alone, so a breach is unambiguous:
+The invariant tests run first and alone, so a breach is unambiguous:
 
 ```bash
 uv run pytest tests/test_structural.py -v
 ```
 
-Build the image the way CI does — `linux/arm64` is not optional, because Apple
-Silicon is where the predecessor failed:
+Build the image the way CI does:
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
@@ -204,21 +237,6 @@ vulnerability scan.
 
 ---
 
-## Status
+## Licence
 
-**Desktop mode is the product, and it is complete**: case creation, the
-statutory clock, identity expansion and the query delta, templates, searches
-and estimates, export handoff, the audit trail and the evidence pack — 370
-tests, `mypy --strict`, three operating systems.
-
-**Hosted mode is proven, then retired by choice.** It was deployed to Azure
-Container Apps with zero secrets — client authentication by federated
-credential from a managed identity, verified live — then torn down because
-desktop mode serves the current need at zero running cost. Every answer is
-recorded in [`verification/`](verification/), the archived audit trail
-verifies in-repo, and [`docs/DEPLOY-hosted.md`](docs/DEPLOY-hosted.md)
-rebuilds it in about thirty minutes when there is a team to serve.
-
-Security reviews, the threat model, and the software bill of materials are in
-[`docs/`](docs/). Working notes for contributors are in
-[`HANDOVER.md`](HANDOVER.md).
+[MIT](LICENSE).

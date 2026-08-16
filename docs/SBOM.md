@@ -82,7 +82,7 @@ The runtime carries **no shell, no package manager and no coreutils**. The
 interpreter is a python-build-standalone CPython copied from the builder, so
 `ARG PYTHON_VERSION` is the single place that decides which interpreter runs —
 previously two base image tags had to agree, and nothing checked that they did
-(see `B-08-distroless-2026-08-14.md`).
+(measured before and after; the working notes hold the full comparison).
 
 **pip is removed from the runtime image.** It is not needed — the venv is
 populated at build time — and a runtime image with no package installer means
@@ -125,7 +125,8 @@ libraries a Python process genuinely needs.
 Before B-08 it was **179 findings, 4 Critical and 19 High**, in `perl-base`,
 `util-linux`, `ncurses` and `gzip` — packages this application never calls,
 with no patch available. Measured either side of the change on 2026-08-14; the
-numbers and the trade are in `B-08-distroless-2026-08-14.md`.
+numbers and the trade were measured either side of the change and are held
+in the project's working notes.
 
 ---
 
