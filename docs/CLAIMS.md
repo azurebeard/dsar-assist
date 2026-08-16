@@ -72,7 +72,7 @@ whose table was never rebuilt. This is that table.
 | INV-11 | `msal-extensions` — which caused every observed portability failure — is never imported | `README.md`, `SBOM.md` | `test_msal_extensions_never_imported` | test |
 | INV-12 | Exactly three modules may speak HTTP | `THREAT-MODEL.md`, `audit/blob.py` | `test_http_client_choke_point` | test |
 | INV-13 | Only `dsar/auth/` may import MSAL | `auth/msal_client.py` | `test_msal_confined_to_auth_package` | test |
-| INV-14 | There is no local database | `README.md`, `DESIGN.md` | `test_no_local_database` | test |
+| INV-14 | There is no local database | `README.md`, design notes | `test_no_local_database` | test |
 | INV-15 | `dsar` and `python -m dsar` are the same code | `README.md` | `test_both_entry_points_resolve` | test |
 | INV-16 | Every documented invocation works on a fresh machine | `cli.py` | `test_docs_never_show_a_bare_dsar_command` | test |
 | INV-17 | No source package is excluded by an ignore rule | — | `test_every_source_package_is_tracked_by_git` | test |
@@ -84,7 +84,7 @@ whose table was never rebuilt. This is that table.
 | # | Claim | Stated in | Enforced by | Kind |
 |---|---|---|---|---|
 | INV-08 | No source file carries a client-secret configuration path | `THREAT-MODEL.md`, `README.md` | `test_no_client_secret_anywhere` | test |
-| INV-09 | Tokens are in memory only — `SerializableTokenCache` cannot appear | `README.md`, `DESIGN.md` | `test_no_serializable_token_cache` | test |
+| INV-09 | Tokens are in memory only — `SerializableTokenCache` cannot appear | `README.md`, design notes | `test_no_serializable_token_cache` | test |
 | INV-31 | Neither registration holds a password or certificate credential | `THREAT-MODEL.md` | `provision.sh` — `assert_no_credentials`, both registrations | CI |
 | INV-32 | Adding a secret to either registration is refused | `add-fic.sh` | app management policy, verified by attempting it | manual |
 | INV-33 | `doctor` fails if a secret-shaped variable is set | `README.md` | `test_a_real_client_secret_is_still_caught` | test |
@@ -120,7 +120,7 @@ whose table was never rebuilt. This is that table.
 |---|---|---|---|---|
 | INV-26 | Base images are pinned by digest, not tag | `SBOM.md` | `test_base_images_are_digest_pinned` | test |
 | INV-27 | The bind address is not configurable | `web/app.py` | `test_bind_address_is_not_configurable` | test |
-| INV-28 | The desktop launcher publishes to loopback only | `web/app.py`, `DESIGN.md` | `test_launchers_publish_to_loopback_only` | test |
+| INV-28 | The desktop launcher publishes to loopback only | `web/app.py`, design notes | `test_launchers_publish_to_loopback_only` | test |
 | INV-29 | The launchers pass the runtime hardening flags | `README.md` | `test_launchers_harden_the_container` | test |
 | INV-36 | Every GitHub Action is pinned to a commit SHA | `SBOM.md` | `test_every_action_is_pinned_to_a_commit_sha` | test |
 | INV-37 | Docker being installed is not treated as the image being pullable | B-07 | `test_the_launcher_does_not_treat_docker_as_available_by_default` | test |
@@ -133,9 +133,9 @@ whose table was never rebuilt. This is that table.
 
 | # | Claim | Stated in | Enforced by | Kind |
 |---|---|---|---|---|
-| INV-42 | The deployment declares no secrets | `THREAT-MODEL.md`, `DESIGN.md` | `test_the_hosted_deployment_declares_no_secrets` | test |
-| INV-43 | The ingress refuses plaintext | `DESIGN.md` | `test_the_hosted_ingress_refuses_plaintext` | test |
-| INV-44 | Deployment fails until a human decides the ingress exposure | `DESIGN.md` | `test_the_ip_restriction_parameter_has_no_default` | test |
+| INV-42 | The deployment declares no secrets | `THREAT-MODEL.md`, design notes | `test_the_hosted_deployment_declares_no_secrets` | test |
+| INV-43 | The ingress refuses plaintext | design notes | `test_the_hosted_ingress_refuses_plaintext` | test |
+| INV-44 | Deployment fails until a human decides the ingress exposure | design notes | `test_the_ip_restriction_parameter_has_no_default` | test |
 | INV-45 | One replica per revision — a session control, **not** a single-writer guarantee | SEC-H-01 | `test_the_container_app_is_pinned_to_one_replica` | test |
 | INV-46 | The audit container permits appends and refuses modification | `THREAT-MODEL.md` | `test_the_audit_container_is_append_protected` | test |
 | INV-47 | The storage account allows no shared key, so no SAS exists | `THREAT-MODEL.md` | `test_the_storage_account_allows_no_shared_key` | test |
@@ -183,5 +183,5 @@ whose table was never rebuilt. This is that table.
 | `test-harness` | A fixture, not an assertion — it prevents rather than detects |
 | `CI` | A workflow step. Runs on every push; not reproduced locally |
 | `runtime` | `doctor` reports it against the real deployment |
-| `manual` | Verified by a person, with the method recorded in `verification/` |
+| `manual` | Verified by a person, with the method recorded in the project's working notes |
 | `open` | **No enforcement.** Must name a backlog item |

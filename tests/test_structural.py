@@ -249,7 +249,6 @@ def test_no_client_secret_anywhere() -> None:
         # collections are empty. Naming a thing in order to prove it is not
         # there is the opposite of using it — and the query has to carry the
         # real property name, or it is a command that does not run.
-        "verification/probe_fic_assertion_offline.py",
         "infra/entra/provision.sh",
         "infra/entra/add-fic.sh",
     }
