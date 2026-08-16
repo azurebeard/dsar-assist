@@ -196,6 +196,17 @@ Recorded because a handover listing only successes is not a handover.
   workflow said it signed it. The same mistake as the line above, made again in
   the same session — a green CI badge is not every workflow.
 
+- **Shell metacharacters in prose, five times.** Backticks in an unquoted
+  heredoc broke `add-fic.sh`; the commit describing that fix repeated it; a
+  Python comment inside a heredoc broke `provision.sh`; the comment *warning
+  about that* used dollar-brace and broke it again; and a commit message in a
+  double-quoted `-m` string had two lines eaten. Every one is prose passed
+  through a shell. The fix is `git commit -F <file>`, not more care.
+- **A pipeline reported success while failing, twice.** `pytest | tail && git
+  commit` once committed with a failing test; `az role assignment delete |
+  tail -1 && echo revoked` printed "revoked" while the role stayed assigned.
+  A pipeline's exit code is the *last* command's. `set -o pipefail`.
+
 The one that generalises: **SEC-H-02**, a path-traversal escape from the
 operations allowlist, existed because a *comment* claimed a guarantee the regex
 did not provide. It survived two readings and a passed WS10 review in the
