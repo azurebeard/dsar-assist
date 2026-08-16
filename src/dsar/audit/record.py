@@ -99,22 +99,31 @@ class AuditRecord:
     #: The `client-request-id` we sent to Graph, echoed back as `request-id`.
     correlation_id: str = ""
     detail: str = ""
+    #: The case every record about a case belongs to, so the trail can answer
+    #: "what happened to this one". `target_id` alone cannot: it holds the case
+    #: id on some actions and the SEARCH id on others, and nothing at all on an
+    #: attempted creation or a refusal.
+    #:
+    #: Added after the trail existed, which is why it is in ADDED_AFTER_V1
+    #: below. Empty on sign-in and sign-out, which are not case events.
+    case_id: str = ""
     prev_hash: str = GENESIS_HASH
     hash: str = ""
 
     def with_hash(self, prev_hash: str) -> AuditRecord:
         """Return this record chained onto `prev_hash`."""
-        body = {k: v for k, v in asdict(self).items() if k != "hash"}
+        body = _hashed_body(asdict(self))
         body["prev_hash"] = prev_hash
         digest = hashlib.sha256(
             prev_hash.encode("ascii") + canonical_json(body).encode("utf-8")
         ).hexdigest()
-        return AuditRecord(**{**body, "hash": digest})
+        return AuditRecord(**{**{k: v for k, v in asdict(self).items() if k != "hash"},
+                              "prev_hash": prev_hash, "hash": digest})
 
     def recompute(self) -> str:
-        body = {k: v for k, v in asdict(self).items() if k != "hash"}
         return hashlib.sha256(
-            self.prev_hash.encode("ascii") + canonical_json(body).encode("utf-8")
+            self.prev_hash.encode("ascii")
+            + canonical_json(_hashed_body(asdict(self))).encode("utf-8")
         ).hexdigest()
 
     def to_json(self) -> str:
@@ -125,6 +134,37 @@ class AuditRecord:
         raw = json.loads(line)
         known = {f for f in AuditRecord.__dataclass_fields__}
         return AuditRecord(**{k: v for k, v in raw.items() if k in known})
+
+
+#: Fields that did not exist when the first record was written.
+#:
+#: The hash covers whatever `asdict()` returns, so adding a field to this
+#: dataclass changes the hash of every record ever written — including the ones
+#: already sitting in an append blob under a 2555-day immutability policy,
+#: which would then all verify as `altered`. That was measured before this
+#: field was added, not assumed.
+#:
+#: So a field added later is hashed **only when it carries a value**. The
+#: guarantee is unchanged in both directions:
+#:
+#:   * an old record has no value, the field is skipped, and its original hash
+#:     still verifies;
+#:   * a new record with a value hashes it, so changing that value is detected;
+#:   * and CLEARING it on a new record is detected too, because the hash it was
+#:     written with included it.
+#:
+#: The one thing this cannot detect is a field added to an old record and left
+#: empty — which is a no-op, since an empty field says nothing.
+ADDED_AFTER_V1: tuple[str, ...] = ("case_id",)
+
+
+def _hashed_body(fields: dict[str, Any]) -> dict[str, Any]:
+    """The fields that participate in the hash, in the shape they are hashed."""
+    return {
+        key: value
+        for key, value in fields.items()
+        if key != "hash" and not (key in ADDED_AFTER_V1 and not value)
+    }
 
 
 def canonical_json(value: Mapping[str, Any]) -> str:
@@ -173,6 +213,7 @@ def build(
     actor_upn: str = "",
     tenant_id: str = "",
     target_id: str = "",
+    case_id: str = "",
     subject_ref: str = "",
     uti: str = "",
     correlation_id: str = "",
@@ -185,6 +226,7 @@ def build(
     return AuditRecord(
         seq=seq,
         ts=now_iso(),
+        case_id=case_id,
         action=action.value,
         outcome=outcome.value,
         actor_oid=actor_oid,

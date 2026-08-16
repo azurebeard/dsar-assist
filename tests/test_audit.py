@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -397,3 +398,132 @@ def test_a_head_that_never_settles_fails_loudly() -> None:
     trail = AuditTrail(_AlwaysStale())
     with pytest.raises(RuntimeError, match="head kept moving"):
         trail.write(Action.SIGN_IN, Outcome.OK, actor_oid="a")
+
+
+# ------------------------------------- adding a field to an existing trail
+
+
+def test_a_record_written_before_case_id_existed_still_verifies() -> None:
+    """The hash covers whatever `asdict()` returns, so adding a field would
+    change the hash of every record ever written — including the ones already
+    in an append blob under a 2555-day immutability policy, which would then
+    all verify as `altered` with no way to fix them.
+
+    Measured before the field was added, not assumed. This is the regression
+    test for it: a record whose stored hash was computed WITHOUT `case_id`
+    must still verify.
+    """
+    import hashlib
+
+    from dsar.audit.record import canonical_json
+
+    record = AuditRecord(
+        seq=1,
+        ts="2026-08-14T10:00:00.000+00:00",
+        action=Action.SIGN_IN.value,
+        outcome=Outcome.OK.value,
+        actor_oid="oid-1",
+    )
+    # The hash exactly as the previous version of this dataclass computed it —
+    # every field except `hash`, with no `case_id` in sight.
+    legacy_body = {
+        k: v
+        for k, v in asdict(record).items()
+        if k not in ("hash", "case_id")
+    }
+    legacy_hash = hashlib.sha256(
+        GENESIS_HASH.encode("ascii") + canonical_json(legacy_body).encode("utf-8")
+    ).hexdigest()
+
+    from dataclasses import replace
+
+    as_stored = replace(record, hash=legacy_hash)
+    assert as_stored.recompute() == legacy_hash, "an existing record stopped verifying"
+    assert verify_chain([as_stored]).intact
+
+
+def test_a_populated_case_id_is_covered_by_the_hash() -> None:
+    """An added field that is not hashed is an unprotected field, which in an
+    audit trail is worse than not having it."""
+    from dataclasses import replace
+
+    record = AuditRecord(
+        seq=1,
+        ts="2026-08-14T10:00:00.000+00:00",
+        action=Action.CASE_CREATED.value,
+        outcome=Outcome.OK.value,
+        case_id="case-1",
+    ).with_hash(GENESIS_HASH)
+    assert record.recompute() == record.hash
+
+    moved = replace(record, case_id="case-2")
+    assert moved.recompute() != moved.hash, "case_id can be changed undetected"
+
+    cleared = replace(record, case_id="")
+    assert cleared.recompute() != cleared.hash, "case_id can be removed undetected"
+
+
+def test_the_chain_still_verifies_across_records_with_and_without_it() -> None:
+    """A trail spans the change: sign-in has no case, the records after it do."""
+    sink = MemorySink()
+    trail = AuditTrail(sink)
+    trail.write(Action.SIGN_IN, Outcome.OK, actor_oid="oid-1")
+    trail.write(Action.CASE_CREATED, Outcome.OK, case_id="case-1", target_id="case-1")
+    trail.write(Action.SEARCH_CREATED, Outcome.OK, case_id="case-1", target_id="s-1")
+
+    result = verify_chain(sink.records)
+    assert result.intact, result.summary()
+    assert [r.case_id for r in sink.records] == ["", "case-1", "case-1"]
+
+
+def test_one_case_filter_returns_the_whole_story() -> None:
+    """The reason `case_id` exists.
+
+    `target_id` alone cannot answer "what happened to this case". It holds the
+    case id on some actions and the SEARCH id on others, and nothing at all on
+    a refusal — so a `target_id == case_id` filter dropped every search, every
+    estimate, every export and every denial, which is the bulk of "what was
+    searched, when, by whom".
+
+    That was not noticed until someone tried to READ the trail per case. It had
+    been verified as intact many times, and never as useful.
+    """
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+
+    sink = MemorySink()
+    trail = AuditTrail(sink)
+
+    class _Ops:
+        def create_search(self, **kw):  # type: ignore[no-untyped-def]
+            return type("R", (), {"body": {"id": "search-1", "displayName": kw["display_name"]}})()
+
+        def run_search(self, **kw):  # type: ignore[no-untyped-def]
+            return None
+
+    reader = Principal(oid="oid-1", tenant_id="t", roles=frozenset())
+    denied = Workflow(_Ops(), reader, trail)  # type: ignore[arg-type]
+
+    # A reader is refused — and the refusal must be findable under the case.
+    with pytest.raises(Exception):
+        denied.create_search("case-1", "Naive", 'participants:"a"')
+
+    operator = Principal(oid="oid-2", tenant_id="t", roles=frozenset({"DSAR.Operator"}))
+    allowed = Workflow(_Ops(), operator, trail)  # type: ignore[arg-type]
+    allowed.create_search("case-1", "Naive", 'participants:"a"')
+    allowed.run_estimate("case-1", "search-1")
+
+    for_case = [r for r in sink.records if r.case_id == "case-1"]
+    actions = [(r.action, r.outcome) for r in for_case]
+
+    assert ("search_created", "denied") in actions, "the refusal was not findable"
+    assert ("search_created", "attempted") in actions
+    assert ("search_created", "ok") in actions
+    assert ("estimate_started", "ok") in actions
+
+    # The old filter would have found only the ATTEMPTED record — the one whose
+    # target_id happened to be the case rather than the search.
+    old_filter = [r for r in sink.records if r.target_id == "case-1"]
+    assert len(old_filter) < len(for_case), (
+        "target_id alone is now sufficient, so this test proves nothing"
+    )

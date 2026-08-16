@@ -88,6 +88,7 @@ class Workflow:
         outcome: Outcome,
         *,
         target_id: str = "",
+        case_id: str = "",
         subject_ref: str = "",
         detail: str = "",
     ) -> None:
@@ -100,17 +101,24 @@ class Workflow:
             actor_upn=self._principal.upn,
             tenant_id=self._principal.tenant_id,
             target_id=target_id,
+            case_id=case_id,
             subject_ref=subject_ref,
             uti=self._principal.uti,
             detail=detail,
         )
 
-    def _require_write(self, action: str, audit_action: Action) -> None:
+    def _require_write(
+        self, action: str, audit_action: Action, case_id: str = ""
+    ) -> None:
         if not self._principal.can_write:
             # A refusal is recorded. "Who tried and was told no" is exactly the
             # question an audit trail exists to answer, and a trail that only
             # holds successes describes a system where nothing is ever refused.
-            self._record(audit_action, Outcome.DENIED, detail=action)
+            #
+            # Carrying the case is what makes it findable later. A denial with
+            # no case attached is a record that answers the question in general
+            # and never for the case somebody is actually asking about.
+            self._record(audit_action, Outcome.DENIED, case_id=case_id, detail=action)
             raise NotPermitted(
                 f"{action} needs the DSAR.Operator role. This account holds "
                 f"{', '.join(sorted(self._principal.roles)) or 'no DSAR role'}."
@@ -148,7 +156,11 @@ class Workflow:
         )
         case = parse_case(response.body)
         self._record(
-            Action.CASE_CREATED, Outcome.OK, target_id=case.id, detail=reference
+            Action.CASE_CREATED,
+            Outcome.OK,
+            target_id=case.id,
+            case_id=case.id,
+            detail=reference,
         )
         log.info("created case %s for reference %s", case.id, reference)
         return case
@@ -195,9 +207,13 @@ class Workflow:
         never regenerated here: a query the operator saw and a query that runs
         must be the same string, or the review means nothing.
         """
-        self._require_write("Creating a search", Action.SEARCH_CREATED)
+        self._require_write("Creating a search", Action.SEARCH_CREATED, case_id)
         self._record(
-            Action.SEARCH_CREATED, Outcome.ATTEMPTED, target_id=case_id, detail=name
+            Action.SEARCH_CREATED,
+            Outcome.ATTEMPTED,
+            target_id=case_id,
+            case_id=case_id,
+            detail=name,
         )
         response = self._ops.create_search(
             case_id=case_id, display_name=name, query=query
@@ -207,7 +223,11 @@ class Workflow:
         # real person and their aliases; a durable copy of it here is the second
         # ungoverned store this tool exists to avoid.
         self._record(
-            Action.SEARCH_CREATED, Outcome.OK, target_id=search.id, detail=name
+            Action.SEARCH_CREATED,
+            Outcome.OK,
+            target_id=search.id,
+            case_id=case_id,
+            detail=name,
         )
         return search
 
@@ -219,9 +239,14 @@ class Workflow:
         has to do. Do not create a search live in a demonstration and wait for
         it; run them beforehand and present completed statistics.
         """
-        self._require_write("Running an estimate", Action.ESTIMATE_STARTED)
+        self._require_write("Running an estimate", Action.ESTIMATE_STARTED, case_id)
         self._ops.run_search(case_id=case_id, search_id=search_id)
-        self._record(Action.ESTIMATE_STARTED, Outcome.OK, target_id=search_id)
+        self._record(
+            Action.ESTIMATE_STARTED,
+            Outcome.OK,
+            target_id=search_id,
+            case_id=case_id,
+        )
 
     def statistics(self, case_id: str, search_id: str) -> Search:
         return parse_search(
@@ -240,19 +265,27 @@ class Workflow:
         the download permission. The handoff is the security model made visible,
         not a gap in the workflow.
         """
-        self._require_write("Initiating an export", Action.EXPORT_INITIATED)
+        self._require_write("Initiating an export", Action.EXPORT_INITIATED, case_id)
         # The one action with a data-protection consequence outside this tool:
         # after it, content exists in a package someone will collect. Recorded
         # before and after, so an interrupted export is distinguishable from one
         # that never started.
         self._record(
-            Action.EXPORT_INITIATED, Outcome.ATTEMPTED, target_id=search_id, detail=name
+            Action.EXPORT_INITIATED,
+            Outcome.ATTEMPTED,
+            target_id=search_id,
+            case_id=case_id,
+            detail=name,
         )
         self._ops.initiate_export(
             case_id=case_id, search_id=search_id, display_name=name
         )
         self._record(
-            Action.EXPORT_INITIATED, Outcome.OK, target_id=search_id, detail=name
+            Action.EXPORT_INITIATED,
+            Outcome.OK,
+            target_id=search_id,
+            case_id=case_id,
+            detail=name,
         )
         return ExportHandoff(
             case_id=case_id, search_id=search_id, portal_url=portal_url
