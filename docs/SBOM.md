@@ -1,6 +1,8 @@
 # Software Bill of Materials
 
-**Generated:** 2026-08-14 from `uv.lock` · **Application version:** 0.1.0
+Generated from `uv.lock`, which locks the versions below across every
+platform marker. CI fails on a stale lock, so this document and the built
+artefact cannot drift apart.
 
 A machine-readable SBOM is attached to every published image by
 `.github/workflows/publish.yml` (`sbom: true`), so it cannot drift from the
@@ -82,20 +84,16 @@ The runtime carries **no shell, no package manager and no coreutils**. The
 interpreter is a python-build-standalone CPython copied from the builder, so
 `ARG PYTHON_VERSION` is the single place that decides which interpreter runs —
 previously two base image tags had to agree, and nothing checked that they did
-(measured before and after; the working notes hold the full comparison).
+(the comparison against a Debian-based runtime is under Scanning below).
 
 **pip is removed from the runtime image.** It is not needed — the venv is
 populated at build time — and a runtime image with no package installer means
 an exploited process cannot fetch and install code.
 
-It has been removed twice. On `python:3.13-slim` it was Debian's, whose
-*vendored* tree carried the only two fixable High findings Trivy reported
-(`msgpack` 1.1.2, `setuptools` 70.3.0), unfixable by any change to
-`pyproject.toml`. On distroless it came back, because a python-build-standalone
-interpreter ships its own — and the CI check missed it, because it asked
-`importlib.util.find_spec("pip")` and the venv never had pip. Trivy caught it.
-The check now looks at the filesystem as well, and was run against the
-pip-carrying image to confirm it discriminates.
+Removal is checked in two ways, because a python-build-standalone interpreter
+ships its own copy of pip under `/opt/python` where an import-system check
+does not look: CI asks the import system *and* enumerates the filesystem under
+`/opt/python`, `/app` and `/usr/local`.
 
 ---
 
@@ -122,11 +120,10 @@ supply chain of its own.
 High, none fixable** — `libc6` (13), `libssl3` (2) and the gcc runtime. All are
 libraries a Python process genuinely needs.
 
-Before B-08 it was **179 findings, 4 Critical and 19 High**, in `perl-base`,
-`util-linux`, `ncurses` and `gzip` — packages this application never calls,
-with no patch available. Measured either side of the change on 2026-08-14; the
-numbers and the trade were measured either side of the change and are held
-in the project's working notes.
+A Debian-based runtime carries **179 findings, 4 Critical and 19 High** in
+`perl-base`, `util-linux`, `ncurses` and `gzip`: packages this application
+never calls, with no patch available. The distroless base removes that entire
+surface, which is why it was chosen.
 
 ---
 

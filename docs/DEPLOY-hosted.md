@@ -1,9 +1,8 @@
 # Deploying hosted mode
 
-Written 2026-08-14. Everything below is built, tested and committed; this is
-the order to run it in, and the two places it will bite.
-
-**One thing is blocked and it needs you** — see step 0.
+Hosted mode runs the same image on Azure Container Apps with no secret
+anywhere. This is the order to run the deployment in, and the places it will
+bite.
 
 ---
 
@@ -22,7 +21,7 @@ returns 404 on a URL where GET succeeds. It is a web UI action only.
 **A package's visibility is independent of its repository's.** Making the
 repository public does not make the package public; they are two settings in
 two places, and both pages have a "Danger Zone → Change visibility". That
-ambiguity has already cost one round trip here.
+ambiguity is easy to fall into.
 
 Start from the package page, which the API gives you authoritatively:
 
@@ -192,9 +191,9 @@ afternoon disappears.
   reduced, for the life of the account. That is a decision for a person, not a
   default in a template.
 - **CA02** (compliant device, hosted) and **CA11** (egress location) if wanted.
-- **A WS10 pass over the hosted attack surface.** It is designed and now built,
-  and it is unreviewed. The threat model names hosted mode as one of the six
-  changes that reopen the review.
+- **A security review of the deployed surface.** The threat model names a
+  hosted deployment as a change that warrants one: it adds an internet-facing
+  endpoint and server-side sessions holding delegated tokens.
 
 ---
 

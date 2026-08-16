@@ -5,31 +5,19 @@ being true.
 
 ## Why this exists
 
-The dominant defect in this codebase is not a bug. It is **a stated guarantee
-with no check behind it**, and there have been six:
+The most damaging class of defect in a security-focused codebase is not a bug.
+It is **a stated guarantee with no check behind it**: a comment, a document or
+a table that asserts a property nothing verifies. Such claims read as evidence
+and are not, and they fail in a characteristic way — a check written beside a
+claim tends to test the thing that was easy to reach rather than the thing the
+claim is about, then passes forever.
 
-| # | The claim | What was actually there |
-|---|---|---|
-| 1 | A comment said the path-segment regex prevented escaping the operations table | It did not. `caseId=".."` resolved to `/security/cases/searches` (SEC-H-02) |
-| 2 | `app.js` opened by declaring *"textContent, never innerHTML"* | Nothing enforced it |
-| 3 | CI asserted no package installer in the image | It asked the import system; pip was on disk. **Trivy found it, the check could not** |
-| 4 | The Bicep said one replica gave the audit chain a single writer | `maxReplicas` bounds a *revision*. Every deploy ran two writers (SEC-H-01) |
-| 5 | *"Both registrations hold zero credentials, asserted mechanically"* | Asserted for one, and the one it skipped was internet-facing (SEC-M-01) |
-| 6 | `msal_client.py` says `doctor` reads `xms_cc` back off the token | `rg xms_cc src/` returns that comment and nothing else. **Still open** |
-| 7 | INV-68 below: *"a tampered trail yields no trustworthy extract"* | True of the text output. `--json` emitted the whole extract anyway, and the test checked a dataclass property rather than an output (SEC-H-03) |
-
-The seventh was written **in the same session as this register**, by the person
-writing it. That is the point rather than an embarrassment: the defect is not
-carelessness, it is that a check written beside a claim tends to test the thing
-that was easy to reach rather than the thing the claim is about. INV-68's test
-asked the object; the guarantee lives in what leaves the process.
-
-Every one was found by accident — by deploying, by scanning, by trying to read
-something. None was found by the thing that claimed to be checking it.
-
-A check that has never been observed to fail is not evidence. This register
-makes the mapping explicit so that **a claim with no enforcement is a CI
-failure rather than a discovery**.
+Unenforced claims are found by accident: by deploying, by scanning, by trying
+to read something. A check that has never been observed to fail is not
+evidence. This register makes the mapping explicit so that **a claim with no
+enforcement is a CI failure rather than a discovery**, and the project's
+convention is that every guard added here is first proven by tampering —
+deliberately breaking the property and watching the named test fail.
 
 ## How it is enforced
 
@@ -61,7 +49,7 @@ whose table was never rebuilt. This is that table.
 | INV-03 | No permitted operation downloads or previews item content | `README.md`, `THREAT-MODEL.md` | `test_no_download_or_preview_operation_exists` | test |
 | INV-04 | Eleven operations, and adding one is a visible diff | `graph/operations.py` | `test_operations_table_is_the_documented_set` | test |
 | INV-05 | Every request path comes from the table, never from an argument | `graph/operations.py` | `test_no_graph_path_is_caller_supplied` | test |
-| INV-06 | A crafted identifier cannot reach an endpoint outside the table | SEC-H-02 | `test_path_segments_cannot_escape_the_operations_table` | test |
+| INV-06 | A crafted identifier cannot reach an endpoint outside the table | `graph/operations.py` | `test_path_segments_cannot_escape_the_operations_table` | test |
 | INV-30 | The issued token carries no download scope | `README.md` | `doctor` — "no data plane" check | runtime |
 
 ## Dependencies and packaging
@@ -98,8 +86,8 @@ whose table was never rebuilt. This is that table.
 | INV-20 | The sink is append-only because there is no other verb | `audit/sink.py` | `test_the_audit_sink_has_no_mutating_method` | test |
 | INV-21 | Nothing in the audit package can rewrite a file | `THREAT-MODEL.md` | `test_nothing_in_the_audit_package_can_rewrite_a_file` | test |
 | INV-22 | The record has no field that could hold subject data | `THREAT-MODEL.md` | `test_the_audit_record_cannot_carry_subject_data` | test |
-| INV-23 | Two writers cannot corrupt the chain | SEC-H-01, `audit/blob.py` | `test_two_writers_during_a_rollout_do_not_corrupt_the_trail` | test |
-| INV-24 | The verifier reads the trail the deployment actually writes | SEC report, `audit/report.py` | `test_audit_verify_reads_the_blob_when_hosted` | test |
+| INV-23 | Two writers cannot corrupt the chain | `audit/blob.py` | `test_two_writers_during_a_rollout_do_not_corrupt_the_trail` | test |
+| INV-24 | The verifier reads the trail the deployment actually writes | `audit/report.py` | `test_audit_verify_reads_the_blob_when_hosted` | test |
 | INV-25 | Tampering is detected and the break is named by `seq` | `README.md`, `THREAT-MODEL.md` | `test_a_tampered_remote_record_is_still_caught` | test |
 | INV-64 | A field added after the first record was written does not invalidate existing hashes | `audit/record.py` | `test_a_record_written_before_case_id_existed_still_verifies` | test |
 | INV-65 | An added field is still covered by the hash once populated | `audit/record.py` | `test_a_populated_case_id_is_covered_by_the_hash` | test |
@@ -107,12 +95,12 @@ whose table was never rebuilt. This is that table.
 | INV-67 | The evidence pack verifies the whole chain, never a subset | `audit/evidence.py` | `test_it_verifies_the_whole_chain_not_the_extract` | test |
 | INV-68 | A tampered trail yields no trustworthy extract | `audit/evidence.py` | `test_a_tampered_trail_yields_no_trustworthy_extract` | test |
 | INV-69 | The evidence pack carries no subject data | `audit/evidence.py` | `test_the_pack_never_carries_subject_data` | test |
-| INV-70 | The refusal holds on **every** output path, not only the text one | SEC-H-03 | `test_the_json_output_refuses_a_tampered_trail_too` | test |
-| INV-71 | Two searches sharing a name are two rows, never one merged row | SEC-H-04 | `test_two_searches_with_one_name_do_not_merge` | test |
-| INV-72 | A received date cannot be out of range, in the future, or in a format the error disowns | SEC-H-05, SEC-M-10 | `test_a_received_date_out_of_range_is_refused_before_it_can_break_the_list` | test |
-| INV-73 | A description cannot smuggle its own received-date marker | SEC-M-09 | `test_a_description_cannot_smuggle_its_own_marker` | test |
-| INV-74 | The marker scan does not walk the whole description | SEC-M-08 | `test_the_marker_scan_does_not_walk_the_whole_description` | test |
-| INV-75 | A malformed register row cannot be silently ignored | SEC-M-13 | `test_the_register_covers_the_claims_it_says_it_does` | test |
+| INV-70 | The refusal holds on **every** output path, not only the text one | `audit/report.py` | `test_the_json_output_refuses_a_tampered_trail_too` | test |
+| INV-71 | Two searches sharing a name are two rows, never one merged row | `audit/evidence.py` | `test_two_searches_with_one_name_do_not_merge` | test |
+| INV-72 | A received date cannot be out of range, in the future, or in a format the error disowns | `web/api.py` | `test_a_received_date_out_of_range_is_refused_before_it_can_break_the_list` | test |
+| INV-73 | A description cannot smuggle its own received-date marker | `cases/received.py` | `test_a_description_cannot_smuggle_its_own_marker` | test |
+| INV-74 | The marker scan does not walk the whole description | `cases/received.py` | `test_the_marker_scan_does_not_walk_the_whole_description` | test |
+| INV-75 | A malformed register row cannot be silently ignored | `tests/test_claims_register.py` | `test_the_register_covers_the_claims_it_says_it_does` | test |
 
 ## The container and the deployment
 
@@ -123,9 +111,9 @@ whose table was never rebuilt. This is that table.
 | INV-28 | The desktop launcher publishes to loopback only | `web/app.py`, design notes | `test_launchers_publish_to_loopback_only` | test |
 | INV-29 | The launchers pass the runtime hardening flags | `README.md` | `test_launchers_harden_the_container` | test |
 | INV-36 | Every GitHub Action is pinned to a commit SHA | `SBOM.md` | `test_every_action_is_pinned_to_a_commit_sha` | test |
-| INV-37 | Docker being installed is not treated as the image being pullable | B-07 | `test_the_launcher_does_not_treat_docker_as_available_by_default` | test |
-| INV-38 | The interpreter version is decided in one place | B-08 | `test_the_interpreter_version_is_decided_in_one_place` | test |
-| INV-39 | The runtime image has no shell | B-08, `SBOM.md` | `test_the_runtime_image_has_no_shell` | test |
+| INV-37 | Docker being installed is not treated as the image being pullable | the `dsar` launcher | `test_the_launcher_does_not_treat_docker_as_available_by_default` | test |
+| INV-38 | The interpreter version is decided in one place | `Dockerfile` | `test_the_interpreter_version_is_decided_in_one_place` | test |
+| INV-39 | The runtime image has no shell | `SBOM.md` | `test_the_runtime_image_has_no_shell` | test |
 | INV-40 | The runtime image has no package installer | `SBOM.md` | CI — "No package installer in the runtime image" | CI |
 | INV-41 | The image runs as uid 10001 | `README.md` | CI — "Runs as non-root" | CI |
 
@@ -136,14 +124,14 @@ whose table was never rebuilt. This is that table.
 | INV-42 | The deployment declares no secrets | `THREAT-MODEL.md`, design notes | `test_the_hosted_deployment_declares_no_secrets` | test |
 | INV-43 | The ingress refuses plaintext | design notes | `test_the_hosted_ingress_refuses_plaintext` | test |
 | INV-44 | Deployment fails until a human decides the ingress exposure | design notes | `test_the_ip_restriction_parameter_has_no_default` | test |
-| INV-45 | One replica per revision — a session control, **not** a single-writer guarantee | SEC-H-01 | `test_the_container_app_is_pinned_to_one_replica` | test |
+| INV-45 | One replica per revision — a session control, **not** a single-writer guarantee | `infra/modules/containerapp.bicep` | `test_the_container_app_is_pinned_to_one_replica` | test |
 | INV-46 | The audit container permits appends and refuses modification | `THREAT-MODEL.md` | `test_the_audit_container_is_append_protected` | test |
 | INV-47 | The storage account allows no shared key, so no SAS exists | `THREAT-MODEL.md` | `test_the_storage_account_allows_no_shared_key` | test |
 | INV-48 | The identity is user-assigned and dedicated | `THREAT-MODEL.md` | `test_the_identity_is_user_assigned_and_not_system` | test |
 | INV-49 | The container image is pinned by digest | `DEPLOY-hosted.md` | `test_the_container_image_is_pinned_by_digest` | test |
-| INV-50 | A hosted operator cannot evict a colleague's session | SEC report, B-06 | `test_one_operator_cannot_evict_another` | test |
-| INV-51 | Token acquisition is bound to the audited actor | SEC-M-04 | `test_the_provider_refuses_an_account_that_is_not_the_principal` | test |
-| INV-52 | Logout clears the session cookie in both modes | SEC-M-05 | `test_logout_clears_the_cookie_in_hosted_mode_too` | test |
+| INV-50 | A hosted operator cannot evict a colleague's session | `auth/session.py` | `test_one_operator_cannot_evict_another` | test |
+| INV-51 | Token acquisition is bound to the audited actor | `auth/desktop.py` | `test_the_provider_refuses_an_account_that_is_not_the_principal` | test |
+| INV-52 | Logout clears the session cookie in both modes | `web/auth_routes.py` | `test_logout_clears_the_cookie_in_hosted_mode_too` | test |
 
 ## The front end and the request surface
 

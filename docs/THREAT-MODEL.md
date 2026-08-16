@@ -1,11 +1,13 @@
 # Threat model
 
-**Date:** 2026-08-14 · **Scope:** Phases 0–4 as built (desktop mode). Hosted
-mode is designed and unbuilt; its threats are marked and deferred to B-03.
+**Scope:** the application in both modes. Desktop is the primary deployment;
+hosted adds an internet-facing endpoint and multi-operator sessions, and its
+additional boundaries are covered in their own sections.
 
 Method: STRIDE over the trust boundaries, with each mitigation named as either
-*enforced* (a test or a control proves it), *inherited* (Microsoft's, not ours),
-or *accepted* (a stated trade). Findings already closed cite their review.
+*enforced* (a test or a control proves it), *inherited* (Microsoft's, not
+ours), or *accepted* (a stated trade). Enforcement is by the tests named in
+[`CLAIMS.md`](CLAIMS.md).
 
 ---
 
@@ -52,27 +54,27 @@ pre-set cookie cannot be adopted. *Enforced.*
 **Tampering / CSRF.** Every state-changing call is a POST, so the browser
 always sends `Origin` — which is why the surface is all-POST: a rule rejecting
 an *absent* Origin would otherwise reject the application's own page loads.
-Absent counts as a mismatch. `/auth/logout` was the one exception and is now
-covered (WS10 SEC-L-05). *Enforced.*
+Absent counts as a mismatch, on every state-changing route including
+`/auth/logout`. *Enforced.*
 
 **Repudiation.** Sign-in, sign-out, case creation, expansion, search creation,
 estimate and export are recorded with actor `oid`, the token's `uti`, and a
 hash chain. Refusals are recorded too — a trail holding only successes
 describes a system where nobody is ever turned away. *Enforced.*
 
-**Information disclosure.** `textContent` throughout, never `innerHTML` — a
-rule the front end had stated in a comment and nothing enforced until a
-structural test was added and proven by tampering. CSP `default-src 'none'`, no `unsafe-inline`. `/healthz`
+**Information disclosure.** `textContent` throughout, never `innerHTML`,
+held by a structural test over every script the app serves. CSP
+`default-src 'none'`, no `unsafe-inline`. `/healthz`
 discloses no tenant, and withholds the version when hosted. A 500 returns a
 21-byte body — no traceback, no exception type, no path (verified). *Enforced.*
 
 **Denial of service.** `/auth/login` is unauthenticated and allocates server
-state: rate-limited 10/min, and the pending-flow store now **refuses** rather
-than evicting, so one caller cannot cancel another's in-progress sign-in
-(OWASP A04-02). API limited 120/min per operator, and a request body capped at
-64 KiB — rate limiting bounds how many requests arrive, not how large one is,
-and nothing else in the stack capped it. The body is read *after* the session
-check, so an anonymous POST is refused without being buffered. *Enforced.*
+state: rate-limited 10/min, and the pending-flow store **refuses** rather than
+evicting, so one caller cannot cancel another's in-progress sign-in. The API
+is limited to 120/min per operator and a request body is capped at 64 KiB;
+rate limiting bounds how many requests arrive, the cap bounds how large one
+is. The body is read *after* the session check, so an anonymous POST is
+refused without being buffered. *Enforced.*
 
 **Elevation of privilege.** Write actions check the app role **server-side** —
 a button that is not rendered is not a control, the endpoint is still there.
@@ -89,8 +91,7 @@ a button that is not rendered is not a control, the endpoint is still there.
 
 **Tampering — reaching an unpermitted endpoint.** Every path comes from the
 eleven-row operations table; no public method accepts a path argument. Path
-segments are validated and, since WS10 SEC-H-02, cannot contain a dot-segment
-or percent-encoding — `caseId=".."` previously resolved to
+segments are validated and cannot contain a dot-segment or percent-encoding — `caseId=".."` previously resolved to
 `/security/cases/searches`, outside the table, *through* the check meant to
 prevent it. *Enforced, 14-vector test.*
 
@@ -135,11 +136,12 @@ the trail becomes a cross-case index of who has been searched for. Directory
 > trail. The chain makes truncation detectable only if a copy of a later head
 > exists — hence the stderr sink, which on Container Apps lands in Log
 > Analytics — **a different data plane in the same subscription and the same
-> resource group**, not a different trust domain (WS10 SEC-M-03). One
+> resource group**, not a different trust domain. One
 > management-plane actor can delete both. Its retention is 90 days against the
 > trail's 2555, so the second copy also expires first. On the desktop there is
 > no second copy at all.
-> **Accepted** for desktop; the append-blob sink with a WORM policy is B-03.
+> **Accepted** for desktop; hosted deployments use the append-blob sink under
+> a WORM policy, which is that second copy.
 
 ---
 
@@ -162,7 +164,7 @@ asserted mechanically. *Enforced.*
 
 ## 5 · Who may attach the managed identity — hosted only
 
-**Added after WS10 SEC-M-06.** The design says the federated credential means
+The design says the federated credential means
 "no secret to store, rotate or leak", and that is true. It also relocates the
 credential rather than removing it: **anyone who can run code as the
 user-assigned identity can mint the client assertion**, and that is a
@@ -191,10 +193,10 @@ stronger than it is.
 
 | Threat | Why not | Compensating |
 |---|---|---|
-| **Token theft from process memory** | Sender-constrained tokens (DPoP, mTLS, Entra PoP) are unavailable — MSAL's public-client PoP needs a broker, and there is none in a Linux container. `doctor` asserts this rather than assuming it | **In-memory only, never serialised.** That is the whole of it today. ⚠️ Three controls previously listed here are **not configured in this tenant** (WS10 SEC-M-02): phishing-resistant MFA (policies grant plain `mfa`), sign-in frequency (**no policy sets it at all**, so the app's own 8h TTL *is* the session lifetime), and any Conditional Access scoped to these applications. `cp1` is declared and its negotiation is still unobserved (B-04). Named as absent rather than listed as present |
+| **Token theft from process memory** | Sender-constrained tokens (DPoP, mTLS, Entra PoP) are unavailable — MSAL's public-client PoP needs a broker, and there is none in a Linux container. `doctor` asserts this rather than assuming it | **In-memory only, never serialised** is the control the application provides. The rest is tenant policy and must be checked, not assumed: phishing-resistant MFA, a sign-in frequency, and Conditional Access scoped to the applications are only compensating controls where the tenant actually enforces them. Whether the STS agreed to CAE (`cp1`) is observable per sign-in via `cae_negotiated`; where it reports false, do not claim near-real-time revocation |
 | **A malicious operator** | They already hold the Purview permissions. The tool grants nothing they lack | The audit trail records what they did, and it is tamper-evident |
-| **A compromised operator endpoint** | Out of scope for an application control | Conditional Access device compliance (B-05), which is the decision still open |
-| **Under-disclosure from a bad query** | A correctness risk with compliance consequences, not a security one — but the sharper edge in practice. `kind:email` silently zeroes the site count | The query is shown and editable before anything runs; a narrowing applies to both queries by default, and both are scanned for mail-item clauses so a one-sided narrowing is named before the run; templates carry cautions and are marked *mailbox only*; B-02 was parked to build-time JSON so a template gets reviewed before it can shape a search |
+| **A compromised operator endpoint** | Out of scope for an application control | Conditional Access device compliance, where the tenant enforces it. Note that Conditional Access cannot target a public client, so on the desktop this can only be applied tenant-wide to the user |
+| **Under-disclosure from a bad query** | A correctness risk with compliance consequences, not a security one — but the sharper edge in practice. `kind:email` silently zeroes the site count | The query is shown and editable before anything runs; a narrowing applies to both queries by default, and both are scanned for mail-item clauses so a one-sided narrowing is named before the run; templates carry cautions, are marked *mailbox only* where a clause excludes site content, and are compiled in at build time so every template is reviewed before it can shape a search |
 | **Purview RBAC being wrong** | Not ours to fix | Stated, not hidden |
 
 ---
@@ -208,7 +210,9 @@ Each of these would invalidate a claim above and needs a fresh review:
 3. Persisting a **token** anywhere, including "just a cache".
 4. Adding a **durable local store** of case data — the defect this project exists to fix.
 5. Recording **subject identifiers or KQL** in the audit trail.
-6. **Hosted mode** (B-03): adds an internet-facing endpoint and server-side sessions holding delegated tokens for multiple operators. Designed, unbuilt, unreviewed.
+6. **Deploying hosted mode**: it adds an internet-facing endpoint and
+   server-side sessions holding delegated tokens for multiple operators, so a
+   deployment of it warrants a review against the hosted sections above.
 
 ---
 

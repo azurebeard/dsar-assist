@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "verified": "2026-08-02",
-  "note": "Standard DSAR scopings. Every template narrows an existing query and none replaces it. The vocabulary in the employment-file sweep is a matter of local practice — correct it here rather than in code. `verified` records the date each template's KQL was called against a real tenant; see verification/kql-property-probe-2026-08-02.md for the measurements, including the finding that mail-item properties silently exclude site content. `mailbox_only` marks the templates where that was measured, so the interface can say it at the moment of use rather than only in a caution nobody expands.",
+  "note": "Standard DSAR scopings. Every template narrows an existing query and none replaces it. The vocabulary in the employment-file sweep is a matter of local practice — correct it here rather than in code. `verified` records when each template's KQL was last run against a real tenant. `mailbox_only` marks templates whose clause excludes site content, so the interface can say so at the moment of use rather than only in a caution nobody expands.",
   "templates": [
     {
       "id": "time_window",
@@ -35,8 +35,8 @@
       "verified": "2026-08-02",
       "fixed_terms": ["kind"],
       "mailbox_only": true,
-      "guidance": "Run this once per workload and compare the counts before committing to an export. Because this tool reports counts rather than content, a per-workload breakdown is the cheapest planning information available — and export bills by volume on E3. Measured on a real estate, meetings were 28 of 40 hits: a naive count is often dominated by calendar items.",
-      "caution": "`kind:` is a mail-item property. Measured 2026-08-02: adding any `kind:` clause reduced the site count to zero, including on a query that touches three sites — so this counts mailbox content only and silently excludes SharePoint and OneDrive. Use it to split the mail workload, never to conclude how much there is in total.",
+      "guidance": "Run this once per workload and compare the counts before committing to an export. Because this tool reports counts rather than content, a per-workload breakdown is the cheapest planning information available — and export bills by volume on E3. A naive count is often dominated by calendar items.",
+      "caution": "`kind:` is a mail-item property: adding any `kind:` clause reduces the site count to zero, so this counts mailbox content only and silently excludes SharePoint and OneDrive. Use it to split the mail workload, never to conclude how much there is in total.",
       "inputs": [
         {
           "name": "kind",
@@ -131,7 +131,7 @@
       "builder": "filetypes",
       "mailbox_only": true,
       "guidance": "Export is the one operation that bills on E3, and it bills by volume. Attachments are usually where that volume is.",
-      "caution": "Like `kind:`, this behaved as a mail-item property when measured on 2026-08-02 — the site count went to zero. Treat the result as an attachment count within mailboxes, not a file count across the estate.",
+      "caution": "Like `kind:`, `filetype:` is a mail-item property — the site count goes to zero. Treat the result as an attachment count within mailboxes, not a file count across the estate.",
       "inputs": [
         {
           "name": "filetypes",

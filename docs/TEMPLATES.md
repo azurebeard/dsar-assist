@@ -144,9 +144,9 @@ refused. Everything else in a template goes through `quote_phrase`.
 
 ## `mailbox_only`
 
-Measured on 2026-08-02: `kind:` and `filetype:` are **mail-item properties**,
-and adding either reduces the SharePoint/OneDrive site count to **zero** —
-including on a query that touches three sites.
+`kind:` and `filetype:` are **mail-item properties**: measured against a live
+tenant, adding either reduces the SharePoint/OneDrive site count to **zero**,
+including on a query that touches multiple sites.
 
 Set `mailbox_only: true` and the interface will:
 
