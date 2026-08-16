@@ -594,10 +594,14 @@ def test_no_print_outside_the_cli_surface() -> None:
     logging handlers.
     """
     permitted = {
-        # The two modules whose whole job is speaking to a person at a
-        # terminal. Everything else logs, so the redaction filter applies.
+        # The modules whose whole job is speaking to a person at a terminal.
+        # Everything else logs, so the redaction filter applies. Widening this
+        # set is the deliberate, visible diff the test exists to force.
         "src/dsar/doctor/report.py",
         "src/dsar/audit/report.py",
+        # `dsar init` — asks two questions, writes one file, tells the person
+        # what happened. Nothing it prints can carry a token or a subject.
+        "src/dsar/init_cmd.py",
     }
     offenders: list[str] = []
     for path in _python_files("src/dsar"):

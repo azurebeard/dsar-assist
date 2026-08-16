@@ -19,28 +19,37 @@ failed to move to a second machine; this one is built around not doing that.
 
 ---
 
-## Run it
+## Install and run
 
-Two supported ways, because relying on only one is how the predecessor's demo
-died. Docker Desktop is frequently blocked or unlicensed on a locked-down
-client laptop; `uv` is a single static binary that installs without admin
-rights. Neither needs Python on the host.
+Nothing to clone, nothing to build, no Python needed on the host. Once, to
+record which registration to use (two GUIDs, neither a secret):
 
 ```bash
-export DSAR_CLIENT_ID=<the desktop app registration's application ID>
-export DSAR_TENANT_ID=<your tenant ID>
-
-./dsar up            # prefers Docker, falls back to uv
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar init
 ```
 
-Force one or the other:
+Then, every time:
 
 ```bash
-DSAR_RUNTIME=uv ./dsar up
-DSAR_RUNTIME=docker ./dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist dsar up
 ```
 
-On Windows, `.\dsar.ps1 up`.
+`uv` itself is a single static binary that installs without admin rights
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`, or `winget install
+astral-sh.uv` on Windows).
+
+The container is the second supported path, because relying on only one is how
+the predecessor's demo died:
+
+```bash
+docker run --rm -p 127.0.0.1:8765:8765 \
+  -v ~/.dsar:/home/dsar/.dsar \
+  ghcr.io/azurebeard/dsar-assist:latest
+```
+
+From a clone, `./dsar up` (or `.\dsar.ps1 up` on Windows) picks whichever
+runtime is actually available. Environment variables override the config file
+if both are set.
 
 If anything is wrong, ask:
 

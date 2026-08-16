@@ -69,7 +69,7 @@ anything that will not start.
 | 2 · Graph as source of truth | ✅ case list rebuilt from Graph — **nothing travels between machines** |
 | 3 · Audit trail | ✅ hash-chained, tamper-evident, no subject data |
 | 4 · Write path | ✅ create case → expand → review KQL → search → delta → export handoff |
-| 5 · Hosted | ✅ **deployed and proven** on `rg-dsar-prod-uks-01`. FIC exchange verified live. Needs admin consent + a role assignment before anyone can sign in; WS10 not yet run |
+| 5 · Hosted | ✅ **proven, then retired by decision** — every answer is in `verification/`, the trail is archived in-repo, and `DEPLOY-hosted.md` rebuilds it in ~30 min. Running cost: zero |
 
 **239 tests, `mypy --strict` clean, CI green.** Multi-arch image (amd64 +
 arm64, built in CI), **distroless runtime** — no shell, no package manager, no

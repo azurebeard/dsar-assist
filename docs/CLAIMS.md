@@ -170,6 +170,7 @@ whose table was never rebuilt. This is that table.
 |---|---|---|---|---|
 | INV-10 | No test reaches the network | `tests/conftest.py`, `expand.py:132` | `conftest.py` — autouse socket guard | test-harness |
 | INV-63 | No real tenant identifier is committed | `HANDOVER.md` | `test_no_tenant_specific_identifier_is_committed` | test |
+| INV-76 | `dsar init` writes a config the loader accepts, owner-only, and refuses one that cannot work | `init_cmd.py` | `test_init_writes_a_config_the_loader_accepts` | test |
 
 ---
 

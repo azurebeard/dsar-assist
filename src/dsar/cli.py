@@ -70,6 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
         "-n", type=int, default=20, dest="count", help="how many (default 20)"
     )
 
+    init = sub.add_parser(
+        "init", help="write ~/.dsar/config.json once, so nothing needs exporting"
+    )
+    init.add_argument("--client-id", default="", help="application (client) ID")
+    init.add_argument("--tenant-id", default="", help="tenant GUID")
+    init.add_argument("--force", action="store_true", help="overwrite an existing file")
+
     doctor = sub.add_parser(
         "doctor", help="diagnose configuration, packaging and connectivity"
     )
@@ -89,6 +96,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     configure_logging(verbose=args.verbose)
+
+    if args.command == "init":
+        from dsar.init_cmd import run_init
+
+        return run_init(args.client_id, args.tenant_id, args.force)
 
     if args.command == "doctor":
         from dsar.doctor.report import run_doctor
