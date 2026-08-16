@@ -98,7 +98,10 @@ names the file and the command.
 | Requests observable | Logged by route template, never by concrete path — so 401s and 403s are visible without copying case identifiers into a second, ungoverned store |
 
 Each row exists because the predecessor lost it. The full reasoning is in
-[`docs/DESIGN.md`](docs/DESIGN.md).
+[`docs/DESIGN.md`](docs/DESIGN.md), and
+**[`docs/CLAIMS.md`](docs/CLAIMS.md) names the test that fails when any of it
+stops being true** — because a guarantee with nothing checking it has been this
+project's most common defect, six times over.
 
 ---
 
