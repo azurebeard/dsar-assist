@@ -72,6 +72,21 @@ class RedactingFilter(logging.Filter):
 
 def configure_logging(verbose: bool = False) -> None:
     """Install the root handler. Called once, from `cli.py`."""
+    import warnings
+
+    # MSAL warns on every authorize request that `form_post` is recommended.
+    # Staying on `query` is a reviewed decision (WS10 SEC-L-02, explained at
+    # `flow_extras` in auth/msal_client.py): `form_post` makes the callback a
+    # cross-site POST that SameSite=Lax cookies do not accompany. A warning
+    # that tells every operator, mid-terminal, to undo a reviewed decision is
+    # noise wearing authority — suppressed narrowly, by message and module.
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*response_mode='form_post' is recommended.*",
+        category=UserWarning,
+        module=r"msal\.oauth2cli\.oauth2",
+    )
+
     root = logging.getLogger()
     if any(isinstance(h, logging.StreamHandler) for h in root.handlers):
         return

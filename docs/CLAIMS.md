@@ -77,7 +77,7 @@ whose table was never rebuilt. This is that table.
 | INV-32 | Adding a secret to either registration is refused | `add-fic.sh` | app management policy, verified by attempting it | manual |
 | INV-33 | `doctor` fails if a secret-shaped variable is set | `README.md` | `test_a_real_client_secret_is_still_caught` | test |
 | INV-34 | Proof-of-possession is unavailable, asserted rather than assumed | `THREAT-MODEL.md` | `doctor` — `assert_no_broker_pop` | runtime |
-| INV-35 | CAE (`cp1`) is negotiated, not merely declared | `auth/msal_client.py:35` | `test_cae_is_read_from_the_token_not_assumed` | test |
+| INV-35 | CAE agreement is observed, never assumed — and absence reads as unobserved, not declined, because `xms_cc` is an access-token claim this client structurally cannot see (read live 2026-08-17) | `auth/msal_client.py:35`, `auth/provider.py` | `test_cae_is_read_from_the_token_not_assumed` | test |
 
 ## The audit trail
 

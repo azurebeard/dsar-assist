@@ -36,10 +36,17 @@ log = logging.getLogger(__name__)
 #: `xms_cc` is read back off the ID token at sign-in and surfaced on
 #: `/api/whoami` and in the audit record — see `Principal.cae_negotiated`.
 #:
-#: This comment used to say `doctor` did that. Nothing did, and `doctor` never
-#: could: it has no session and therefore no ID token. The comment was the
-#: entire implementation for several weeks (B-04, B-14) and was the sixth
-#: recorded instance of a stated guarantee with no check behind it.
+#: Read live 2026-08-17: the ID token carried no `xms_cc`. That matches the
+#: documentation, which places the claim on ACCESS tokens (it exists for the
+#: resource to read), and this application never parses an access token — so
+#: agreement is expected to read as unobserved, and near-real-time revocation
+#: is not claimed. The declaration still buys claims-challenge handling.
+#:
+#: This comment used to say `doctor` did the reading. Nothing did, and
+#: `doctor` never could: it has no session and therefore no ID token. The
+#: comment was the entire implementation for several weeks (B-04, B-14) and
+#: was the sixth recorded instance of a stated guarantee with no check behind
+#: it.
 CLIENT_CAPABILITIES = ["cp1"]
 
 

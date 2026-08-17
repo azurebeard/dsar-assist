@@ -186,6 +186,13 @@ class Workflow:
             Action.IDENTITY_EXPANDED,
             Outcome.OK,
             target_id=case_id,
+            # Observed missing on the first live trail (seq 4 and 15,
+            # 2026-08-17): target_id carried the case but `case_id` did not,
+            # so the evidence pack's one-case filter dropped the expansion and
+            # counted it unattributable. Those two records stay unattributed
+            # forever — the trail is append-only — which is the honest cost of
+            # finding this by reading a real trail instead of a fixture.
+            case_id=case_id,
             subject_ref=(
                 self._trail.subject_ref(case_id, subject.primary_email)
                 if self._trail and case_id

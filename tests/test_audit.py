@@ -513,6 +513,18 @@ def test_one_case_filter_returns_the_whole_story() -> None:
     allowed.create_search("case-1", "Naive", 'participants:"a"')
     allowed.run_estimate("case-1", "search-1")
 
+    # The expansion too. On the first live trail it carried the case only in
+    # target_id, so the one-case filter dropped it and the evidence pack
+    # counted it unattributable — this test covered every action EXCEPT the
+    # one that resolves the subject.
+    from dsar.identity.expand import Subject
+
+    allowed.expand(
+        Subject(primary_email="subject@example.test"),
+        identity_expansion=False,
+        case_id="case-1",
+    )
+
     for_case = [r for r in sink.records if r.case_id == "case-1"]
     actions = [(r.action, r.outcome) for r in for_case]
 
@@ -520,6 +532,9 @@ def test_one_case_filter_returns_the_whole_story() -> None:
     assert ("search_created", "attempted") in actions
     assert ("search_created", "ok") in actions
     assert ("estimate_started", "ok") in actions
+    assert ("identity_expanded", "ok") in actions, (
+        "the expansion is not findable under its case"
+    )
 
     # The old filter would have found only the ATTEMPTED record — the one whose
     # target_id happened to be the case rather than the search.

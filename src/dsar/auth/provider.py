@@ -85,10 +85,18 @@ class Principal:
 
     @property
     def cae_negotiated(self) -> bool:
-        """Did the STS agree to Continuous Access Evaluation?
+        """Was CAE agreement observed? False means UNOBSERVED, never declined.
 
-        Until this is True on a real token, **do not claim near-real-time
-        revocation**. `cp1` being declared is a request, not an outcome.
+        Read live for the first time 2026-08-17: a desktop sign-in with `cp1`
+        declared carried no `xms_cc` on the ID token. That matches Microsoft's
+        documentation, which places `xms_cc` on **access** tokens — it exists
+        for the resource to read — and this application never parses an access
+        token. So the agreement is structurally unobservable here, and this
+        property is expected to stay False on current Entra behaviour.
+
+        The consequence stands either way: **do not claim near-real-time
+        revocation.** Declaring `cp1` still buys claims-challenge handling,
+        which is kept at the Graph choke point regardless.
         """
         return "cp1" in self.client_capabilities
 

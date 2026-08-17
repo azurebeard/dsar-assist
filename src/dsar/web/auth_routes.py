@@ -309,8 +309,11 @@ async def callback(request: Request) -> Response:
         actor_upn=principal.upn,
         tenant_id=principal.tenant_id,
         uti=principal.uti,
+        # "unobserved", not "no CAE": xms_cc is an access-token claim and this
+        # application reads only the ID token, so absence is the expected
+        # reading, not the STS declining. See Principal.cae_negotiated.
         detail=(", ".join(sorted(principal.roles)) or "no DSAR role")
-        + (" · CAE" if principal.cae_negotiated else " · no CAE"),
+        + (" · CAE agreed" if principal.cae_negotiated else " · CAE unobserved"),
     )
     log.info(
         "signed in: oid=%s roles=%s uti=%s",
