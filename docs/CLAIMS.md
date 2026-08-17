@@ -175,6 +175,7 @@ whose table was never rebuilt. This is that table.
 | INV-63 | No real tenant identifier is committed | working notes | `test_no_tenant_specific_identifier_is_committed` | test |
 | INV-76 | `dsar init` writes a config the loader accepts, owner-only, and refuses one that cannot work | `init_cmd.py` | `test_init_writes_a_config_the_loader_accepts` | test |
 | INV-77 | The README install is pinned to the released version, and the container image by digest | `README.md` | `test_the_readme_pins_the_current_release` | test |
+| INV-87 | `dsar --version` reports the version pyproject declares — the two cannot drift | `dsar/__init__.py` | `test_the_version_is_the_version` | test |
 
 ---
 

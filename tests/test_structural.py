@@ -546,6 +546,22 @@ def test_docs_never_show_a_bare_dsar_command() -> None:
     assert offenders == []
 
 
+def test_the_version_is_the_version() -> None:
+    """`dsar.__version__` must equal the version pyproject declares.
+
+    The v0.1.1 tag shipped reporting "dsar 0.1.0": the release bump touched
+    `pyproject.toml`, the hardcoded `__version__` drifted, and the doctor
+    "version agreement" check compared the parser's string against the same
+    constant it was built from — a check of a thing against itself. Caught by
+    installing the tag and running `--version`, which is one step later than
+    a release check is allowed to be.
+    """
+    manifest = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    import dsar
+
+    assert dsar.__version__ == manifest["project"]["version"]
+
+
 def test_the_readme_pins_the_current_release() -> None:
     """The install a reader follows must be the released version, pinned.
 
