@@ -496,10 +496,13 @@ def test_one_case_filter_returns_the_whole_story() -> None:
 
     class _Ops:
         def create_search(self, **kw):  # type: ignore[no-untyped-def]
-            return type("R", (), {"body": {"id": "search-1", "displayName": kw["display_name"]}})()
+            return type("R", (), {
+                "body": {"id": "search-1", "displayName": kw["display_name"]},
+                "correlation_id": "corr-search",
+            })()
 
         def run_search(self, **kw):  # type: ignore[no-untyped-def]
-            return None
+            return type("R", (), {"body": {}, "correlation_id": "corr-run"})()
 
     reader = Principal(oid="oid-1", tenant_id="t", roles=frozenset())
     denied = Workflow(_Ops(), reader, trail)  # type: ignore[arg-type]
@@ -622,3 +625,50 @@ def test_a_free_text_case_id_cannot_ride_into_the_trail() -> None:
         assert payload["error"] == "invalid_input", path
 
     assert sink.records == [], "a refused identifier still reached the trail"
+
+
+def test_ok_records_carry_the_graph_correlation_id() -> None:
+    """B-25, found reading the first live trail: every record's
+    `correlation_id` was empty. The Graph client mints a `client-request-id`
+    per request and Graph echoes it back — the pair that joins an audit
+    record to the Graph activity log at investigation time — but the echo
+    lived in the response headers and nothing read it out.
+
+    OK records carry it. ATTEMPTED records stay empty deliberately: the id
+    is minted per request inside the client, so before the call there is
+    nothing true to write."""
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+
+    sink = MemorySink()
+    trail = AuditTrail(sink)
+
+    class _Ops:
+        def create_case(self, **kw):  # type: ignore[no-untyped-def]
+            return type("R", (), {
+                "body": {"id": "case-7", "displayName": kw["display_name"]},
+                "correlation_id": "corr-case-7",
+            })()
+
+    operator = Principal(
+        oid="oid-1", tenant_id="t", roles=frozenset({"DSAR.Operator"})
+    )
+    Workflow(_Ops(), operator, trail).create_case("DSAR-2026-0002")  # type: ignore[arg-type]
+
+    attempted, ok = sink.records
+    assert (attempted.outcome, attempted.correlation_id) == ("attempted", "")
+    assert (ok.outcome, ok.correlation_id) == ("ok", "corr-case-7")
+
+
+def test_the_response_correlation_id_prefers_the_graph_echo() -> None:
+    """`request-id` is Graph's own id for the request; `client-request-id` is
+    ours returned. Either joins the logs; Graph's is the one its support and
+    activity tooling indexes first, so it wins when both are present."""
+    from dsar.graph.client import GraphResponse
+
+    both = GraphResponse(200, {}, {"request-id": "g-1", "client-request-id": "c-1"})
+    assert both.correlation_id == "g-1"
+    ours_only = GraphResponse(200, {}, {"client-request-id": "c-1"})
+    assert ours_only.correlation_id == "c-1"
+    neither = GraphResponse(200, {}, {})
+    assert neither.correlation_id == ""

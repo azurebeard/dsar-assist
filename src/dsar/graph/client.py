@@ -74,6 +74,23 @@ class GraphResponse:
     def get(self, key: str, default: Any = None) -> Any:
         return self.body.get(key, default)
 
+    @property
+    def correlation_id(self) -> str:
+        """The id Graph echoes back for this exact request.
+
+        We send `client-request-id` and ask for the echo; Graph answers with
+        `request-id` (its own) and `client-request-id` (ours, returned). That
+        pair is what joins an audit record to a Graph activity log entry at
+        investigation time — and the audit field for it sat empty on every
+        record of the first live trail (B-25), because the id lived in these
+        headers and nothing read it out.
+        """
+        return str(
+            self.headers.get("request-id")
+            or self.headers.get("client-request-id")
+            or ""
+        )
+
 
 class GraphClient:
     """Issues authenticated Graph requests on behalf of one identity."""

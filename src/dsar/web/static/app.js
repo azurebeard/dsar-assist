@@ -524,7 +524,9 @@
         "Only the " + side + " query carries a mail-item clause " +
         "(kind:, filetype:, hasattachment:). That side counts mailbox content " +
         "and reports zero sites, so the two searches are not measuring the " +
-        "same estate and the delta can read backwards.");
+        "same estate and the delta can read backwards. Those are the three " +
+        "known mail-item properties — this check is a list, " +
+        "not a KQL parser, so an unlisted one would pass unnoticed.");
     } else if (inNaive) {
       lines.push(
         "Both queries carry a mail-item clause, so both site counts will read " +
@@ -1096,6 +1098,26 @@
     const a = naive && naive.statistics, b = expanded && expanded.statistics;
     if (!a || !b || !a.complete || !b.complete || a.item_count === null || b.item_count === null) {
       hide("delta");
+      return;
+    }
+    // B-10: this banner used to render away from the queries, so a delta
+    // computed from two searches an operator had made incomparable arrived
+    // with no warning beside it. The queries that actually RAN come back
+    // from Graph on each row, so the same mail-item check the form runs can
+    // run here — on any machine, on a case opened weeks later, on a query
+    // pasted straight into Purview's own builder.
+    const naiveMail = hasMailItemClause(naive.query);
+    const expandedMail = hasMailItemClause(expanded.query);
+    $("delta").classList.toggle("warn", naiveMail !== expandedMail);
+    if (naiveMail !== expandedMail) {
+      setText("delta",
+        "These two searches are not comparable: only the " +
+        (expandedMail ? "expanded" : "naive") + " query carries a mail-item " +
+        "clause (kind:, filetype:, hasattachment:), which counts mailbox " +
+        "content and reports zero sites. The difference below measures that " +
+        "clause, not the identity expansion. These are the three known " +
+        "mail-item properties — the check is a list, not a KQL parser.");
+      show("delta");
       return;
     }
     const extra = b.item_count - a.item_count;

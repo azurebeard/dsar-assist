@@ -437,3 +437,28 @@ def test_the_hidden_attribute_actually_hides(client: TestClient) -> None:
     server-side tests read attributes and a browser paints computed style."""
     css = client.get("/style.css").text
     assert "[hidden] { display: none !important; }" in css
+
+
+def test_the_delta_checks_comparability_where_it_is_displayed(
+    client: TestClient,
+) -> None:
+    """B-10's first residual: the delta banner rendered on the case view,
+    away from the queries, so a number computed from two incomparable
+    searches arrived with no warning beside it. The queries that actually
+    ran come back from Graph on each search row, so the mail-item check runs
+    at the point of display — on any machine, weeks later, including a query
+    pasted into Purview's own builder that no click tracking ever saw.
+
+    Asserted on the mechanism, not the wording: renderDelta consults
+    hasMailItemClause on both ran queries before quoting a difference, and
+    the not-comparable path exists.
+    """
+    script = client.get("/app.js").text
+    delta = script.split("function renderDelta(", 1)[1].split("\n  }\n", 1)[0]
+    assert delta.count("hasMailItemClause(") == 2, (
+        "renderDelta no longer checks both ran queries"
+    )
+    assert "not comparable" in delta
+    # And the second residual, honesty about scope: everywhere the mail-item
+    # list drives a message, the message owns that it is a list, not a parser.
+    assert script.count("not a KQL parser") >= 2

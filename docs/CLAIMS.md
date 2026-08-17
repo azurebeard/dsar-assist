@@ -92,6 +92,7 @@ whose table was never rebuilt. This is that table.
 | INV-64 | A field added after the first record was written does not invalidate existing hashes | `audit/record.py` | `test_a_record_written_before_case_id_existed_still_verifies` | test |
 | INV-65 | An added field is still covered by the hash once populated | `audit/record.py` | `test_a_populated_case_id_is_covered_by_the_hash` | test |
 | INV-66 | The trail can answer "what happened to this case" | `audit/evidence.py` | `test_one_case_filter_returns_the_whole_story` | test |
+| INV-90 | An OK record carries Graph's echo for the request that produced it, joining the trail to the Graph activity log | `graph/client.py`, `cases/workflow.py` | `test_ok_records_carry_the_graph_correlation_id`, `test_the_response_correlation_id_prefers_the_graph_echo` | test |
 | INV-67 | The evidence pack verifies the whole chain, never a subset | `audit/evidence.py` | `test_it_verifies_the_whole_chain_not_the_extract` | test |
 | INV-68 | A tampered trail yields no trustworthy extract | `audit/evidence.py` | `test_a_tampered_trail_yields_no_trustworthy_extract` | test |
 | INV-69 | The evidence pack carries no subject data | `audit/evidence.py` | `test_the_pack_never_carries_subject_data` | test |
@@ -148,6 +149,7 @@ whose table was never rebuilt. This is that table.
 | INV-56 | The delta is only the expansion's contribution, or the interface says so | `THREAT-MODEL.md` | `test_the_delta_says_when_it_has_stopped_meaning_what_it_looks_like` | test |
 | INV-57 | A status cannot land on a page the operator has left | — | `test_a_status_cannot_land_on_a_page_the_operator_left` | test |
 | INV-80 | The front end cannot post a key the server silently discards | `web/static/app.js` | `test_the_expand_payload_keys_are_ones_the_server_reads` | test |
+| INV-91 | The delta checks comparability where it is displayed, against the queries that actually ran, and its mail-item check owns that it is a list, not a parser | `web/static/app.js` | `test_the_delta_checks_comparability_where_it_is_displayed` | test |
 
 ## Correctness with compliance consequences
 

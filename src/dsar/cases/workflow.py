@@ -135,6 +135,7 @@ class Workflow:
         target_id: str = "",
         case_id: str = "",
         subject_ref: str = "",
+        correlation_id: str = "",
         detail: str = "",
     ) -> None:
         if self._trail is None:
@@ -149,6 +150,7 @@ class Workflow:
             case_id=case_id,
             subject_ref=subject_ref,
             uti=self._principal.uti,
+            correlation_id=correlation_id,
             detail=detail,
         )
 
@@ -208,6 +210,11 @@ class Workflow:
             Outcome.OK,
             target_id=case.id,
             case_id=case.id,
+            # Graph's echo for this exact request — what joins this record to
+            # the Graph activity log at investigation time (B-25). ATTEMPTED
+            # records stay empty: the id is minted per request inside the
+            # client, so before the call there is nothing true to write.
+            correlation_id=response.correlation_id,
             detail=reference,
         )
         log.info("created case %s for reference %s", case.id, reference)
@@ -306,6 +313,7 @@ class Workflow:
             Outcome.OK,
             target_id=search.id,
             case_id=case_id,
+            correlation_id=response.correlation_id,
             detail=name,
         )
         return search
@@ -319,7 +327,7 @@ class Workflow:
         it; run them beforehand and present completed statistics.
         """
         self._require_write("Running an estimate", Action.ESTIMATE_STARTED, case_id)
-        self._timed(
+        response = self._timed(
             "estimate_start",
             lambda: self._ops.run_search(case_id=case_id, search_id=search_id),
         )
@@ -328,6 +336,7 @@ class Workflow:
             Outcome.OK,
             target_id=search_id,
             case_id=case_id,
+            correlation_id=response.correlation_id,
         )
 
     def statistics(self, case_id: str, search_id: str) -> Search:
@@ -359,7 +368,7 @@ class Workflow:
             case_id=case_id,
             detail=name,
         )
-        self._ops.initiate_export(
+        response = self._ops.initiate_export(
             case_id=case_id, search_id=search_id, display_name=name
         )
         self._record(
@@ -367,6 +376,7 @@ class Workflow:
             Outcome.OK,
             target_id=search_id,
             case_id=case_id,
+            correlation_id=response.correlation_id,
             detail=name,
         )
         return ExportHandoff(

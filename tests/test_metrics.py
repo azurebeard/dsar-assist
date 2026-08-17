@@ -248,7 +248,12 @@ def test_the_workflow_times_its_graph_calls_success_and_failure() -> None:
     class _Ops:
         def create_case(self, **kw):  # type: ignore[no-untyped-def]
             return type(
-                "R", (), {"body": {"id": "case-9", "displayName": kw["display_name"]}}
+                "R",
+                (),
+                {
+                    "body": {"id": "case-9", "displayName": kw["display_name"]},
+                    "correlation_id": "corr-case",
+                },
             )()
 
         def create_search(self, **kw):  # type: ignore[no-untyped-def]
