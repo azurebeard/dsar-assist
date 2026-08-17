@@ -43,7 +43,7 @@ from dsar.web.limits import (
     RateLimiter,
 )
 from dsar.web.security import origin_ok
-from dsar.config import Config
+from dsar.config import Config, ConfigError
 
 __all__ = ["login", "callback", "logout", "current_principal", "AuthState"]
 
@@ -139,7 +139,29 @@ async def login(request: Request) -> Response:
         )
 
     claims = request.query_params.get("claims") or None
-    app = build_client(config)
+    try:
+        # MSAL performs OIDC discovery at construction. A wrong tenant, a
+        # well-formed GUID that exists nowhere, or an unreachable login
+        # endpoint all surface HERE — and used to surface as an unhandled 500
+        # with a traceback, observed on macOS with placeholder registration
+        # values. A person at a sign-in page needs the diagnosis, not the
+        # stack.
+        app = build_client(config)
+    except ConfigError:
+        # A refused configuration is the design working, not an outage —
+        # it propagates, the same answer `build_client` gives everywhere else.
+        raise
+    except Exception as exc:
+        log.error("could not reach the identity platform: %s", exc)
+        return HTMLResponse(
+            "<h1>Sign-in unavailable</h1>"
+            f"<p>{_escape(str(exc))}</p>"
+            "<p>The identity platform rejected this configuration or could "
+            "not be reached. Check DSAR_TENANT_ID and DSAR_CLIENT_ID are the "
+            "GUIDs from your app registration, then run the doctor command "
+            "shown in the README.</p>",
+            status_code=503,
+        )
 
     flow: dict[str, Any] = app.initiate_auth_code_flow(
         scopes_for(config),
@@ -181,7 +203,21 @@ async def callback(request: Request) -> Response:
             status_code=400,
         )
 
-    app = build_client(config)
+    try:
+        app = build_client(config)
+    except ConfigError:
+        raise
+    except Exception as exc:
+        # Discovery succeeded moments ago at /auth/login, so this is almost
+        # always transient — but a person mid-sign-in still needs a sentence,
+        # not a stack.
+        log.error("could not reach the identity platform at redemption: %s", exc)
+        return HTMLResponse(
+            "<h1>Sign-in failed</h1><p>The identity platform could not be "
+            "reached to complete the sign-in. Start again from the "
+            "application.</p>",
+            status_code=502,
+        )
     result = app.acquire_token_by_auth_code_flow(flow, dict(request.query_params))
 
     if "access_token" not in result:

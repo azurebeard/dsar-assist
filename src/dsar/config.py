@@ -176,6 +176,23 @@ def _assert_not_writable_by_others(path: Path) -> None:
         )
 
 
+def looks_like_guid(value: str) -> bool:
+    """Shape check for the two registration identifiers.
+
+    Lives here because two callers need the same answer: `doctor`, which
+    diagnoses with a fix line, and `serve`, which refuses to start — a wrong
+    tenant means every sign-in will fail with an unhandled identity-platform
+    error, and refusing before the port opens is the version of that failure
+    that names itself.
+    """
+    parts = value.split("-")
+    if len(parts) != 5:
+        return False
+    if [len(p) for p in parts] != [8, 4, 4, 4, 12]:
+        return False
+    return all(c in "0123456789abcdefABCDEF" for p in parts for c in p)
+
+
 def ensure_private_dir(path: Path) -> Path:
     """Create (or tighten) a directory only its owner may read.
 

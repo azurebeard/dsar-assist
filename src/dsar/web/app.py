@@ -1,17 +1,22 @@
 """The ASGI application and the `up` command behind it.
 
-One server, two modes. The bind address is `0.0.0.0` and that is deliberate:
-Docker publishes to the container's own interface, so a process that binds
-loopback inside a container is unreachable from the host. The predecessor's
-guarantee — a `127.0.0.1` literal in the source, checked by a test — cannot
-survive containerisation, so it moved rather than being quietly dropped:
+One server, two modes, and the bind address depends on who owns reachability:
 
-  desktop  the launcher's `-p 127.0.0.1:8765:8765` publishes to host loopback
-           only, and a test asserts that flag is present in both launchers
-  hosted   Container Apps ingress with `allowInsecure: false` plus
-           `ipSecurityRestrictions`, asserted by the IaC tests
-
-Both are testable. Neither is this line.
+  bare host  `127.0.0.1`. The `uvx` path became the primary install after the
+             original decision was made for launchers, and a bare host has no
+             launcher — the process IS the boundary. This bound `0.0.0.0`
+             unconditionally while `doctor` said "binds loopback directly",
+             observed on a corporate laptop with the sign-in page listening on
+             the LAN: instance #10 of a stated guarantee with no check behind
+             it. `bind_host` is now the check's subject.
+  container  `0.0.0.0` inside the container's own network namespace — a
+             process that binds loopback in a container is unreachable from
+             the host. The launcher's `-p 127.0.0.1:8765:8765` publishes to
+             host loopback only, and a test asserts that flag is present in
+             both launchers.
+  hosted     `0.0.0.0` behind Container Apps ingress with
+             `allowInsecure: false` plus `ipSecurityRestrictions`, asserted
+             by the IaC tests.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route
 
 from dsar import __version__
-from dsar.config import Config, ConfigError, load_config
+from dsar.config import Config, ConfigError, load_config, looks_like_guid
 from dsar.auth.desktop import DesktopTokenProvider
 from dsar.auth.msal_client import build_client
 from dsar.auth.session import Session
@@ -48,14 +53,22 @@ from dsar.web.security import (
     origin_ok,
 )
 
-__all__ = ["build_app", "serve", "BIND_HOST", "STATIC_DIR"]
+__all__ = ["build_app", "serve", "BIND_HOST", "LOOPBACK_HOST", "bind_host", "STATIC_DIR"]
 
 log = logging.getLogger(__name__)
 
-#: See the module docstring. Not a configuration option — there is no parameter
-#: and no environment variable that changes it, because the control it used to
-#: represent now lives in the launcher and the ingress.
+#: The container/hosted bind, where a launcher or an ingress owns
+#: reachability. Not a configuration option — there is no parameter and no
+#: environment variable that changes it. `bind_host` decides which of the two
+#: values applies; see the module docstring.
 BIND_HOST = "0.0.0.0"  # noqa: S104 — see module docstring
+LOOPBACK_HOST = "127.0.0.1"
+
+
+def bind_host(*, is_hosted: bool, in_container: bool) -> str:
+    """Loopback on a bare host; the wildcard only where something else —
+    a container launcher or the hosted ingress — owns reachability."""
+    return BIND_HOST if (is_hosted or in_container) else LOOPBACK_HOST
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -306,23 +319,49 @@ def serve(port: int | None = None, open_browser: bool = True) -> int:
         log.error("Run `dsar doctor` for the full diagnosis.")
         return 1
 
+    # Refused before the port opens, with doctor's diagnosis. A malformed
+    # registration id means every sign-in will fail as an unhandled
+    # identity-platform error three clicks later — observed on macOS with
+    # placeholder values, where `up` served happily and `/auth/login`
+    # answered with a traceback.
+    malformed = [
+        f"{name}={value!r}"
+        for name, value in (
+            ("DSAR_CLIENT_ID", config.client_id),
+            ("DSAR_TENANT_ID", config.tenant_id),
+        )
+        if not looks_like_guid(value)
+    ]
+    if malformed:
+        log.error("not a well-formed GUID: %s", ", ".join(malformed))
+        log.error(
+            "Both are GUIDs — a tenant domain name is not a tenant ID here. "
+            "Run `dsar init` with the values from your app registration, or "
+            "`dsar doctor` for the full diagnosis."
+        )
+        return 1
+
     effective_port = port or config.port
     app = build_app(config)
-
-    url = config.base_url or f"http://localhost:{effective_port}"
-    log.info("dsar %s — %s mode (%s)", __version__, config.mode.value, config.mode_reason)
-    log.info("listening on %s:%s — open %s", BIND_HOST, effective_port, url)
 
     # Inside a container there is no browser to open, and the port belongs to
     # the container's namespace rather than the host's. The launcher opens the
     # host browser instead.
-    in_container = Path("/.dockerenv").exists() or os.environ.get("DSAR_IN_CONTAINER")
+    in_container = bool(
+        Path("/.dockerenv").exists() or os.environ.get("DSAR_IN_CONTAINER")
+    )
+    host = bind_host(is_hosted=config.mode.is_hosted, in_container=in_container)
+
+    url = config.base_url or f"http://localhost:{effective_port}"
+    log.info("dsar %s — %s mode (%s)", __version__, config.mode.value, config.mode_reason)
+    log.info("listening on %s:%s — open %s", host, effective_port, url)
+
     if open_browser and not config.mode.is_hosted and not in_container:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
     uvicorn.run(
         app,
-        host=BIND_HOST,
+        host=host,
         port=effective_port,
         log_config=None,  # our own handler, with the redaction filter attached
         # uvicorn's access logger writes the concrete path, which carries case

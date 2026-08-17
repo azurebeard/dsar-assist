@@ -607,3 +607,59 @@ def test_a_download_scope_in_the_token_response_refuses_sign_in(config_env) -> N
             expected_tenant_id=TENANT,
             granted_scopes=["something.DOWNLOAD.all"],
         )
+
+
+# ------------------------------------------------ misconfiguration, spoken
+
+
+def test_a_bad_tenant_at_login_is_a_diagnosis_not_a_traceback(config_env) -> None:
+    """Observed on macOS: placeholder registration values served happily, and
+    the first sign-in click answered 500 with an ASGI traceback. MSAL does
+    OIDC discovery at client construction, so a wrong tenant — or, here, the
+    socket guard standing in for an unreachable login endpoint — surfaces
+    exactly there. A person at a sign-in page needs the diagnosis, not the
+    stack.
+
+    No `offline_msal` fixture, deliberately: the guard makes discovery fail
+    the way a dead tenant does."""
+    client = TestClient(build_app(load_config()), follow_redirects=False)
+    response = client.get("/auth/login")
+    assert response.status_code == 503
+    assert "Sign-in unavailable" in response.text
+    assert "Traceback" not in response.text
+
+
+def test_up_refuses_a_malformed_registration_id_before_binding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The same failure, refused at startup. `up` used to serve with any
+    string in the two GUID slots and let every sign-in fail three clicks
+    later; `doctor` knew, but only if asked. Now `up` applies doctor's shape
+    check itself and refuses before the port opens."""
+    import dsar.web.app as web_app
+
+    for key, value in {
+        "DSAR_CLIENT_ID": "...",
+        "DSAR_TENANT_ID": "contoso.onmicrosoft.com",
+        "DSAR_HOME": str(tmp_path / "home"),
+        "DSAR_AUDIT_DIR": str(tmp_path / "audit"),
+    }.items():
+        monkeypatch.setenv(key, value)
+
+    def _must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("uvicorn.run was reached with a malformed registration id")
+
+    monkeypatch.setattr(web_app.uvicorn, "run", _must_not_run)
+    assert web_app.serve(open_browser=False) == 1
+
+
+def test_the_bind_host_is_loopback_on_a_bare_host() -> None:
+    """INV-85. The wildcard bind was decided when launchers owned
+    reachability; the `uvx` path has no launcher, so the process is the
+    boundary — and `doctor` was already claiming "binds loopback directly"
+    while the server bound the wildcard on a corporate laptop."""
+    from dsar.web.app import BIND_HOST, LOOPBACK_HOST, bind_host
+
+    assert bind_host(is_hosted=False, in_container=False) == LOOPBACK_HOST
+    assert bind_host(is_hosted=False, in_container=True) == BIND_HOST
+    assert bind_host(is_hosted=True, in_container=False) == BIND_HOST

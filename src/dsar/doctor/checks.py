@@ -352,12 +352,11 @@ def _check_audit_dir() -> Finding:
 
 
 def _looks_like_guid(value: str) -> bool:
-    parts = value.split("-")
-    if len(parts) != 5:
-        return False
-    if [len(p) for p in parts] != [8, 4, 4, 4, 12]:
-        return False
-    return all(c in "0123456789abcdefABCDEF" for p in parts for c in p)
+    # Shared with `serve`, which refuses to start on the same answer this
+    # check diagnoses — one shape rule, not two drifting copies.
+    from dsar.config import looks_like_guid
+
+    return looks_like_guid(value)
 
 
 # --------------------------------------------------------------------- hosted

@@ -110,6 +110,8 @@ whose table was never rebuilt. This is that table.
 | # | Claim | Stated in | Enforced by | Kind |
 |---|---|---|---|---|
 | INV-26 | Base images are pinned by digest, not tag | `SBOM.md` | `test_base_images_are_digest_pinned` | test |
+| INV-85 | A bare-host desktop binds loopback; the wildcard is only for a container or the hosted ingress, where a launcher or ingress owns reachability | `web/app.py`, doctor "exposure" | `test_the_bind_host_is_loopback_on_a_bare_host` | test |
+| INV-86 | A malformed or rejected identity configuration is a diagnosis, never a traceback: refused before the port opens, or answered with a page | `web/app.py`, `web/auth_routes.py` | `test_up_refuses_a_malformed_registration_id_before_binding`, `test_a_bad_tenant_at_login_is_a_diagnosis_not_a_traceback` | test |
 | INV-27 | The bind address is not configurable | `web/app.py` | `test_bind_address_is_not_configurable` | test |
 | INV-28 | The desktop launcher publishes to loopback only | `web/app.py`, design notes | `test_launchers_publish_to_loopback_only` | test |
 | INV-29 | The launchers pass the runtime hardening flags | `README.md` | `test_launchers_harden_the_container` | test |
