@@ -745,9 +745,42 @@
 
         status("Both estimates started. Watching for results\u2026", true, epoch);
         openCase({ case_id: state.case_id, reference: state.reference });
+        // The workflow is submitted; the form's job is done. Without this the
+        // next visit to New request showed the PREVIOUS subject \u2014 name,
+        // aliases, employee ID \u2014 still sitting in the fields, with a stale
+        // reference one click away from a duplicate case. Cleared on
+        // successful submission only: an abandoned half-done flow keeps its
+        // typed data, because losing an operator's input is its own failure.
+        resetNewRequestForm();
       } catch (err) { /* handled */ }
     });
   });
+
+  function resetNewRequestForm() {
+    for (const id of ["reference", "received", "primary-email", "display-name",
+                      "other-emails", "nicknames", "employee-id",
+                      "kql-naive", "kql-expanded"]) {
+      $(id).value = "";
+    }
+    // Template inputs are rendered dynamically, so they are swept by query
+    // rather than by id \u2014 a new template's field must not survive either.
+    for (const field of document.querySelectorAll(
+        "#templates input, #templates textarea")) {
+      field.value = "";
+    }
+    for (const select of document.querySelectorAll("#templates select")) {
+      select.selectedIndex = 0;
+    }
+    $("subject-fieldset").disabled = true;
+    // Emptied, not merely hidden: the chips carry the subject's aliases as
+    // textContent, and hidden DOM is still DOM.
+    $("identifiers").replaceChildren();
+    for (const id of ["case-created", "expand-note", "expansion", "run-progress"]) {
+      hide(id);
+    }
+    state.generated = null;
+    state.narrowings = { naive: [], expanded: [] };
+  }
 
   // ----------------------------------------------------- case detail
 
