@@ -84,16 +84,16 @@ on the host, nothing cloned.
 
 ```powershell
 winget install astral-sh.uv
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar init
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar up
 ```
 
 **macOS / Linux:**
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar init
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar up
 ```
 
 `init` runs once. It asks for the two GUIDs identifying your app registration
@@ -123,7 +123,7 @@ whichever runtime is available.
 If anything is wrong:
 
 ```bash
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar doctor
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar doctor
 ```
 
 `doctor` names the problem and the fix, including the exact redirect URI to
@@ -169,9 +169,9 @@ highlighted.
 **Audit trail**:
 
 ```bash
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar audit verify
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar audit tail
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.0 dsar audit evidence <case-id>
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar audit verify
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar audit tail
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar audit evidence <case-id>
 ```
 
 `verify` recomputes the hash chain and names the first break if anything was
