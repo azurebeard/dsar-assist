@@ -576,12 +576,18 @@ def test_the_readme_pins_the_current_release() -> None:
     version = manifest["project"]["version"]
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
-    suffixes = re.findall(r"git\+https://github\.com/azurebeard/dsar-assist(\S*)", readme)
-    assert suffixes, "the README no longer shows the uvx install at all"
-    unpinned = [s for s in suffixes if s != f"@v{version}"]
-    assert unpinned == [], (
-        f"README install URLs not pinned to @v{version}: {unpinned!r}"
-    )
+    # The quick start carries the same install commands for a different
+    # reader, and would rot the same way.
+    for rel in ("README.md", "docs/QUICKSTART.md"):
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        suffixes = re.findall(
+            r"git\+https://github\.com/azurebeard/dsar-assist(\S*)", text
+        )
+        assert suffixes, f"{rel} no longer shows the uvx install at all"
+        unpinned = [s for s in suffixes if s != f"@v{version}"]
+        assert unpinned == [], (
+            f"{rel} install URLs not pinned to @v{version}: {unpinned!r}"
+        )
 
     # The container path pins by digest, never by a repointable tag.
     assert ":latest" not in readme, "README shows a :latest image reference"

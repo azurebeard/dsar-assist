@@ -12,6 +12,7 @@
   <nav id="nav" hidden>
     <button class="tab" data-view="requests" type="button">Requests</button>
     <button class="tab" data-view="new-request" type="button">New request</button>
+    <button class="tab" data-view="batch" type="button">Batch</button>
   </nav>
   <div id="identity" class="identity" aria-live="polite">
     <span class="muted">checking…</span>
@@ -189,7 +190,44 @@
   </section>
 
   <!-- --------------------------------------------------- case detail -->
-  <section id="view-case" class="view" hidden>
+  <!-- ------------------------------------------------------------- batch -->
+<section id="view-batch" class="view" hidden>
+  <h2>Batch — many requests, one sitting</h2>
+  <p class="muted small">
+    Paste rows or choose a CSV. The file is read by your browser and never
+    uploaded: each row runs through the same audited steps as a single
+    request — case, identity, both searches — two rows at a time. Estimates
+    are started and left to run; review each case from the Requests list.
+  </p>
+
+  <label for="batch-input">Rows
+    <span class="muted">(header:
+    reference,received,primary_email,display_name,nicknames,other_emails,employee_id;
+    separate multiple nicknames or addresses with a semicolon)</span>
+  </label>
+  <textarea id="batch-input" rows="6" spellcheck="false"
+    placeholder="reference,received,primary_email,display_name,nicknames&#10;DSAR-2026-0201,2026-08-12,jordan.hale@contoso.com,Jordan Hale,Jay Hale"></textarea>
+  <p>
+    <input id="batch-file" type="file" accept=".csv,text/csv">
+  </p>
+
+  <p>
+    <button id="batch-parse" class="button secondary" type="button">Check the rows</button>
+    <button id="batch-run" class="button" type="button" disabled>Create all valid rows</button>
+    <button id="batch-retry" class="button secondary" type="button" hidden>Retry failed rows</button>
+    <button id="batch-clear" class="button subtle" type="button">Clear</button>
+  </p>
+  <p id="batch-note" class="muted small" hidden></p>
+
+  <table id="batch-table" hidden>
+    <thead>
+      <tr><th>Reference</th><th>Received</th><th>Subject</th><th>Status</th></tr>
+    </thead>
+    <tbody id="batch-body"></tbody>
+  </table>
+</section>
+
+<section id="view-case" class="view" hidden>
     <div class="row">
       <h2 id="case-title">Case</h2>
       <button id="back" class="button secondary" type="button">Back to requests</button>
@@ -217,6 +255,9 @@
   </section>
 
   <footer>
+    <!-- First-run readiness (B-18): the checks that need a session, run once
+         at sign-in. `doctor` covers everything a session is not needed for. -->
+    <p id="readiness" class="muted small" hidden></p>
     <p class="muted small">
       No data plane. This tool never downloads, previews or stores item
       content — exports are collected from the Microsoft Purview portal under

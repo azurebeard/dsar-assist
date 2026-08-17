@@ -36,6 +36,9 @@ against the claim: a download-capable scope refuses the sign-in outright.
 - **Keeps a hash-chained audit trail**: every action including refusals, with
   the data subject appearing only as a case-scoped pseudonym. Edits and
   deletions are detected and named by record.
+- **Takes a batch**: paste or open a CSV and each row runs the same audited
+  steps as a single request, two at a time, with per-row status and
+  failed-only retry. The file is read by your browser and never uploaded.
 - **Produces a per-case evidence pack** suitable for attaching to the
   response. It verifies the whole chain first and refuses to produce a pack
   from a trail that does not verify.
@@ -76,6 +79,10 @@ reopen them, are in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 ---
 
 ## Install
+
+New to the tool and answering DSARs rather than administering tenants? Start
+with [docs/QUICKSTART.md](docs/QUICKSTART.md), which walks the first case
+end to end.
 
 `uv` is the only prerequisite: one static binary, no admin rights, no Python
 on the host, nothing cloned.

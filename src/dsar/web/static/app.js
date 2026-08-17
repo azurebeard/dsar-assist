@@ -28,6 +28,9 @@
     //: on; `timing` is one workflow's milestones, integers only, posted once
     //: when both estimates complete. An abandoned flow never posts.
     metricsEnabled: false, timing: null,
+    //: Batch rows (B-17): browser memory only, for this session, never
+    //: persisted and never uploaded as a file.
+    batch: { rows: [] },
     //: Which narrowings have been applied to each query, by template id. The
     //: delta is only the expansion's contribution while these two agree; see
     //: renderComparability().
@@ -210,6 +213,20 @@
     state.total = 0;
     state.canWrite = false;
 
+    // Subject data especially (WS10 SEC-M-01): a batch holds up to a hundred
+    // subjects' rows and the form holds one — on a shared browser, either
+    // surviving a sign-out shows the next operator the last one's subjects.
+    // Emptied, not merely hidden; hidden DOM is still DOM.
+    state.batch = { rows: [] };
+    $("batch-input").value = "";
+    $("batch-file").value = "";
+    $("batch-body").replaceChildren();
+    hide("batch-table");
+    hide("batch-note");
+    resetNewRequestForm();
+    setText("readiness", "");
+    hide("readiness");
+
     $("identity").replaceChildren(el("span", "not signed in", "muted"));
     hide("nav");
     for (const section of document.querySelectorAll(".view")) {
@@ -219,9 +236,25 @@
     show("signed-out");
   }
 
+  // First-run readiness (B-18): the two checks that need a session, run once
+  // at sign-in. Failure is loud and names the fix; success is one quiet line,
+  // because a first-run operator wants the confirmation and a daily operator
+  // stops seeing a constant.
+  async function renderReadiness() {
+    try {
+      const { status: code, payload } = await api("/api/readiness", {});
+      if (code !== 200) return;
+      const notes = (payload.checks || []).map((c) => c.note).join(" · ");
+      setText("readiness", (payload.ready ? "Ready — " : "Not ready: ") + notes);
+      $("readiness").className = payload.ready ? "muted small" : "warn small";
+      show("readiness");
+    } catch (err) { /* handled in api() */ }
+  }
+
   function renderSignedIn(me) {
     state.canWrite = !!me.can_write;
     state.metricsEnabled = !!me.metrics_enabled;
+    renderReadiness();
     // Every role held, not the one that decided the outcome. App roles in
     // Entra are ADDITIVE — a user assigned both carries both in the token, and
     // nothing "wins". Showing only the effect made that look like a conflict
@@ -238,8 +271,10 @@
     if (!state.canWrite) {
       // Server-enforced too. Hiding a button is not a control — the endpoint
       // is still there — so this is a courtesy, not the boundary.
-      $("create-case").disabled = true;
-      $("create-case").title = "Needs the DSAR.Operator role";
+      for (const id of ["create-case", "batch-run", "batch-retry"]) {
+        $(id).disabled = true;
+        $(id).title = "Needs the DSAR.Operator role";
+      }
     }
     showView("requests");
     loadRequests();
@@ -1150,6 +1185,237 @@
       status("Export started. Collect it in the Purview portal.", false, epoch);
     } catch (err) { /* handled */ }
   }
+
+  // ------------------------------------------------------------ batch (B-17)
+  // Client-driven by design: the rows live in this page's memory, the file is
+  // read locally and never uploaded, and every step runs through the same
+  // audited per-case endpoints as the single flow — so the batch inherits the
+  // trail, the role checks, the correlation ids and the op metrics instead of
+  // duplicating them. Two rows in flight; a failed row remembers which step
+  // failed and replays from there, never repeating a Graph write that
+  // succeeded.
+
+  const BATCH_COLUMNS = ["reference", "received", "primary_email",
+                         "display_name", "nicknames", "other_emails",
+                         "employee_id"];
+
+  function parseCsv(text) {
+    const rows = []; let row = []; let field = ""; let quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (quoted) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
+        } else field += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); field = "";
+        if (row.some((f) => f.trim() !== "")) rows.push(row);
+        row = [];
+      } else field += c;
+    }
+    row.push(field);
+    if (row.some((f) => f.trim() !== "")) rows.push(row);
+    return rows;
+  }
+
+  const semis = (value) => (value || "").split(";").map((s) => s.trim()).filter(Boolean);
+
+  function parseBatch(text) {
+    const raw = parseCsv(text);
+    if (raw.length < 2) return { error: "Nothing to do: a header row and at least one data row are needed." };
+    const header = raw[0].map((h) => h.trim().toLowerCase());
+    // Unknown columns are refused, not dropped. A silently ignored column is
+    // how this page once lost every nickname an operator typed.
+    const unknown = header.filter((h) => BATCH_COLUMNS.indexOf(h) === -1);
+    if (unknown.length) return { error: "Unknown column(s): " + unknown.join(", ") + ". Known: " + BATCH_COLUMNS.join(", ") };
+    for (const required of ["reference", "primary_email"]) {
+      if (header.indexOf(required) === -1) return { error: "The " + required + " column is required." };
+    }
+    return {
+      rows: raw.slice(1).map((cells) => {
+        const record = { status: "parsed", note: "", case_id: null,
+                         expansion: null, naiveDone: false, expandedDone: false };
+        header.forEach((name, i) => { record[name] = (cells[i] || "").trim(); });
+        return record;
+      }),
+    };
+  }
+
+  function batchStatusCell(row) {
+    if (row.status === "failed") return "failed at " + row.failedAt + ": " + row.note;
+    if (row.status === "invalid") return "invalid: " + row.note;
+    if (row.status === "done") return "case + both searches started";
+    return row.status;
+  }
+
+  function renderBatch() {
+    const rows = (state.batch && state.batch.rows) || [];
+    const body = $("batch-body");
+    body.replaceChildren();
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      tr.appendChild(el("td", row.reference || ""));
+      tr.appendChild(el("td", row.received || ""));
+      tr.appendChild(el("td", row.primary_email || ""));
+      const cell = el("td", batchStatusCell(row));
+      if (row.status === "failed" || row.status === "invalid") cell.className = "warn";
+      if (row.status === "done") cell.className = "ok";
+      tr.appendChild(cell);
+      body.appendChild(tr);
+    }
+    $("batch-table").toggleAttribute("hidden", rows.length === 0);
+    const failed = rows.filter((r) => r.status === "failed").length;
+    const done = rows.filter((r) => r.status === "done").length;
+    const valid = rows.filter((r) => r.status === "valid").length;
+    $("batch-run").disabled = valid === 0 || !state.canWrite;
+    $("batch-retry").disabled = !state.canWrite;
+    $("batch-retry").toggleAttribute("hidden", failed === 0);
+    if (rows.length) {
+      setText("batch-note",
+        rows.length + " row" + (rows.length === 1 ? "" : "s") +
+        (valid ? " · " + valid + " ready" : "") +
+        (done ? " · " + done + " done" : "") +
+        (failed ? " · " + failed + " failed" : ""));
+      show("batch-note");
+    } else hide("batch-note");
+  }
+
+  $("batch-file").addEventListener("change", () => {
+    const file = $("batch-file").files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    // Into the visible textarea, deliberately: what will run is what the
+    // operator can read, same rule as the two queries.
+    reader.onload = () => { $("batch-input").value = String(reader.result || ""); };
+    reader.readAsText(file);
+  });
+
+  $("batch-parse").addEventListener("click", async () => {
+    clearError();
+    const parsed = parseBatch($("batch-input").value);
+    if (parsed.error) { state.batch = { rows: [] }; renderBatch(); return fail(null, parsed.error); }
+    state.batch = { rows: parsed.rows };
+    // Client shape checks for the columns with no server rule...
+    for (const row of parsed.rows) {
+      const problems = [];
+      if (!row.primary_email || row.primary_email.indexOf("@") === -1) {
+        problems.push("primary_email must be an address");
+      }
+      if (problems.length) { row.status = "invalid"; row.note = problems.join("; "); }
+    }
+    // ...and the server's own rules for the two fields it owns, checked by
+    // the same code that will enforce them at creation. No subject data in
+    // this call — references and dates only.
+    try {
+      const { status: code, payload } = await api("/api/batch/validate", {
+        rows: parsed.rows.map((r) => ({ reference: r.reference || "", received: r.received || "" })),
+      });
+      if (code !== 200) return fail(payload, "The rows could not be validated.");
+      payload.rows.forEach((verdict, i) => {
+        const row = parsed.rows[i];
+        if (!verdict.ok) {
+          row.status = "invalid";
+          row.note = row.note ? row.note + "; " + verdict.message : verdict.message;
+        } else if (row.status === "parsed") {
+          row.status = "valid";
+          row.note = "";
+        }
+      });
+    } catch (err) { return; }
+    renderBatch();
+  });
+
+  async function runBatchRow(row) {
+    const step = async (name, work) => {
+      row.status = name; renderBatch();
+      await work();
+    };
+    try {
+      if (!row.case_id) {
+        await step("creating case", async () => {
+          const { status: code, payload } = await api("/api/case/create", {
+            reference: row.reference, received: row.received || "",
+          });
+          if (code !== 201) throw { at: "case", payload };
+          row.case_id = payload.case_id;
+        });
+      }
+      if (!row.expansion) {
+        await step("resolving identity", async () => {
+          const { status: code, payload } = await api("/api/expand", {
+            case_id: row.case_id,
+            primary_email: row.primary_email,
+            display_name: row.display_name || "",
+            aliases: semis(row.nicknames),
+            other_emails: semis(row.other_emails),
+            employee_id: row.employee_id || "",
+          });
+          if (code !== 200) throw { at: "identity", payload };
+          row.expansion = { naive: payload.naive_kql, expanded: payload.kql };
+        });
+      }
+      for (const kind of ["naive", "expanded"]) {
+        if (row[kind + "Done"]) continue;
+        await step("starting " + kind + " search", async () => {
+          const { status: code, payload } = await api("/api/search/create", {
+            case_id: row.case_id, kind,
+            query: kind === "naive" ? row.expansion.naive : row.expansion.expanded,
+            run: true,
+          });
+          if (code !== 201) throw { at: kind + " search", payload };
+          row[kind + "Done"] = true;
+        });
+      }
+      row.status = "done"; row.note = "";
+    } catch (failure) {
+      row.status = "failed";
+      row.failedAt = (failure && failure.at) || "unknown step";
+      row.note = (failure && failure.payload && failure.payload.message) || "request failed";
+    }
+    renderBatch();
+  }
+
+  async function runBatch(rows) {
+    const queue = rows.slice();
+    // Two in flight. Purview throttles the account, not the process, and at
+    // the observed latencies two workers keep well under any plausible limit
+    // while a 25-row batch still lands inside a coffee.
+    const workers = [];
+    const width = Math.min(2, queue.length);
+    for (let i = 0; i < width; i++) {
+      workers.push((async () => {
+        while (queue.length) await runBatchRow(queue.shift());
+      })());
+    }
+    await Promise.all(workers);
+    const failed = (state.batch.rows || []).filter((r) => r.status === "failed").length;
+    status(failed
+      ? "Batch finished: " + failed + " row" + (failed === 1 ? "" : "s") + " failed. Retry runs only those, resuming at the failed step."
+      : "Batch finished. Review each case from the Requests list.", false);
+  }
+
+  $("batch-run").addEventListener("click", async () => {
+    clearError();
+    await withBusy($("batch-run"), "Running…", () =>
+      runBatch(state.batch.rows.filter((r) => r.status === "valid")));
+  });
+
+  $("batch-retry").addEventListener("click", async () => {
+    clearError();
+    await withBusy($("batch-retry"), "Retrying…", () =>
+      runBatch(state.batch.rows.filter((r) => r.status === "failed")));
+  });
+
+  $("batch-clear").addEventListener("click", () => {
+    state.batch = { rows: [] };
+    $("batch-input").value = "";
+    $("batch-file").value = "";
+    renderBatch();
+    status("Cleared. Nothing from the batch is kept anywhere.", false);
+  });
 
   // ---------------------------------------------------------- session
 

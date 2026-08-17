@@ -193,6 +193,24 @@ stronger than it is.
 
 ---
 
+## 6 · The batch, and why it adds no boundary
+
+Batch mode looks like new surface and is deliberately not. The rows — the
+subject columns included — are parsed by the operator's browser from a file
+that is never uploaded, live in page memory for the session, and execute
+through the same per-case endpoints as the single flow, two at a time. Every
+step therefore inherits the session gate, the role check, the audit record,
+the correlation id and the operation metric that already existed; there is no
+server-side batch queue, no batch file handling, and no persistence of a row
+anywhere. A failed row replays from its failed step using ids it already
+holds, so a retry never repeats a Graph write that succeeded.
+
+The one server-side addition is `/api/batch/validate`: reference and
+received-date rule checks by the same code that enforces them at creation.
+Its rows accept exactly those two keys — a subject column arriving there is
+refused loudly, not ignored — and the row count is capped. It makes no Graph
+call and creates nothing. *Enforced by test.*
+
 ## Not mitigated, and said plainly
 
 | Threat | Why not | Compensating |

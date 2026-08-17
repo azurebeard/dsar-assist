@@ -1,4 +1,4 @@
-"""Standard DSAR query templates (Phase 5, alongside A-21).
+"""Standard DSAR query templates.
 
 Identity expansion answers *who*. These answer *what about them* — the handful
 of scopings a DSAR actually needs, pre-written, with the operator's own values

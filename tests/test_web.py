@@ -462,3 +462,132 @@ def test_the_delta_checks_comparability_where_it_is_displayed(
     # And the second residual, honesty about scope: everywhere the mail-item
     # list drives a message, the message owns that it is a list, not a parser.
     assert script.count("not a KQL parser") >= 2
+
+
+def test_readiness_names_the_purview_problem_before_work_starts() -> None:
+    """B-18. `doctor` diagnoses everything a session is not needed for and
+    could never check these two: it has no token. Whether the operator holds
+    a DSAR role and whether Purview answers them are only knowable signed
+    in — so they are checked at sign-in and the failure names the fix,
+    instead of surprising the operator on their first attempt."""
+    from dsar.auth.provider import Principal
+    from dsar.graph.errors import PurviewRoleMissing
+    from dsar.web.api import handle
+
+    operator = Principal(
+        oid="oid-1",
+        tenant_id="66666666-7777-8888-9999-aaaaaaaaaaaa",
+        roles=frozenset({"DSAR.Operator"}),
+    )
+
+    class _Ready:
+        def list_requests(self, principal, *, scope, force=False):  # noqa: ANN001
+            return object()
+
+    status, payload = handle(
+        "/api/readiness", {}, principal=operator,
+        cases=_Ready(),  # type: ignore[arg-type]
+        config=None,  # type: ignore[arg-type]
+        workflow=None,  # type: ignore[arg-type]
+    )
+    assert (status, payload["ready"]) == (200, True)
+
+    class _NoRole:
+        def list_requests(self, principal, *, scope, force=False):  # noqa: ANN001
+            raise PurviewRoleMissing(operation="list_cases")
+
+    status, payload = handle(
+        "/api/readiness", {}, principal=operator,
+        cases=_NoRole(),  # type: ignore[arg-type]
+        config=None,  # type: ignore[arg-type]
+        workflow=None,  # type: ignore[arg-type]
+    )
+    assert (status, payload["ready"]) == (200, False)
+    purview = next(c for c in payload["checks"] if c["name"] == "purview")
+    assert not purview["ok"] and "eDiscovery role" in purview["note"]
+
+    # No role in the token at all: not ready, and the note says where to ask.
+    auditorless = Principal(
+        oid="oid-2", tenant_id="66666666-7777-8888-9999-aaaaaaaaaaaa"
+    )
+    status, payload = handle(
+        "/api/readiness", {}, principal=auditorless,
+        cases=_Ready(),  # type: ignore[arg-type]
+        config=None,  # type: ignore[arg-type]
+        workflow=None,  # type: ignore[arg-type]
+    )
+    assert payload["ready"] is False
+    role = next(c for c in payload["checks"] if c["name"] == "app role")
+    assert "Entra" in role["note"]
+
+
+def test_batch_validation_checks_rules_without_touching_graph_or_subjects() -> None:
+    """B-17. The batch is client-driven; this endpoint is its one server
+    piece — the two fields with server-owned rules, checked by the same code
+    that enforces them at creation, so the dry run cannot drift from the
+    run. A subject column arriving here is refused loudly: a validation
+    endpoint that accepted names and addresses would be a subject-data sink
+    with "validate" in its name."""
+    from dsar.auth.provider import Principal
+    from dsar.web.api import handle
+
+    operator = Principal(
+        oid="oid-1",
+        tenant_id="66666666-7777-8888-9999-aaaaaaaaaaaa",
+        roles=frozenset({"DSAR.Operator"}),
+    )
+
+    def validate(rows):  # noqa: ANN001, ANN202
+        return handle(
+            "/api/batch/validate", {"rows": rows}, principal=operator,
+            cases=None,  # type: ignore[arg-type]
+            config=None,  # type: ignore[arg-type]
+            workflow=None,  # type: ignore[arg-type]
+        )
+
+    status, payload = validate([
+        {"reference": "DSAR-2026-0300", "received": "2026-08-01"},
+        {"reference": "DSAR-2026-0300", "received": ""},          # duplicate
+        {"reference": "", "received": "2026-08-01"},              # no reference
+        {"reference": "DSAR-2026-0301", "received": "01/08/2026"},  # bad date
+        {"reference": "DSAR-2026-0302", "primary_email": "a@x.test"},  # subject key
+    ])
+    assert status == 200 and payload["ok"] is False
+    oks = [r["ok"] for r in payload["rows"]]
+    assert oks == [True, False, False, False, False]
+    assert "duplicate of row 1" in payload["rows"][1]["message"]
+    assert "primary_email" in payload["rows"][4]["message"]
+
+    # The cap, and the empty batch.
+    status, payload = validate([{"reference": f"R-{i}", "received": ""} for i in range(101)])
+    assert status == 400
+    status, payload = validate([])
+    assert status == 400
+
+
+def test_the_batch_is_client_driven_and_resumes_without_repeating_writes(
+    client: TestClient,
+) -> None:
+    """B-17's shape, held: the batch inherits the single flow's controls by
+    RUNNING the single flow, and a retry resumes at the failed step rather
+    than repeating a Graph write that succeeded. Asserted on the mechanism:
+    each step is guarded by the state the previous one stored, and unknown
+    CSV columns are refused, not dropped — a silently ignored column is how
+    this page once lost every nickname an operator typed."""
+    script = client.get("/app.js").text
+    batch = script.split("batch (B-17)", 1)[1]
+    # Resume guards: a row that holds a case id does not create again, an
+    # expansion is not re-resolved, a started search is not restarted.
+    assert "if (!row.case_id)" in batch
+    assert "if (!row.expansion)" in batch
+    assert 'if (row[kind + "Done"]) continue;' in batch
+    # Unknown columns are refused.
+    assert "Unknown column(s)" in batch
+    # The rows go to the same per-case endpoints, not a batch executor.
+    for endpoint in ("/api/case/create", "/api/expand", "/api/search/create"):
+        assert endpoint in batch
+    # And the only batch endpoint is validation.
+    from dsar.web.api import API_ENDPOINTS
+
+    batch_endpoints = [e for e in API_ENDPOINTS if "batch" in e]
+    assert batch_endpoints == ["/api/batch/validate"]

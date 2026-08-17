@@ -1,4 +1,4 @@
-"""Identity expansion (Phase 5, A-20).
+"""Identity expansion.
 
 A DSAR arrives with a name and an email address. The estate knows the person by
 more than that: a UPN, a former surname from before a marriage, proxy addresses
@@ -7,17 +7,17 @@ thread, a nickname everyone actually calls them. A search on the primary
 address alone misses all of it, and the miss is invisible — the search returns
 results, just not the right ones.
 
-Two resolvers, both live since contract v3.1.0:
+Two resolvers:
 
-* `GraphDirectoryResolver` reads the directory through `find_users`, the
-  operation E-05 added to §7. Its `$select` is fixed in `operations.py`, so
-  the retrieval is bounded to the eight fields expansion actually reads.
+* `GraphDirectoryResolver` reads the directory through the `find_users`
+  operation. Its `$select` is fixed in `operations.py`, so the retrieval is
+  bounded to the eight fields expansion actually reads.
 * `DirectoryResolver` expands against a snapshot the caller supplies. Used by
   the tests, by replay mode, and by an operator who would rather not turn on
   `User.Read.All` at all.
 
 `User.Read.All` is not requested unless identity expansion is enabled, so the
-v1 consent surface stays at the §5 v1 scopes for anyone who does not use this.
+consent surface stays minimal for anyone who does not use this.
 """
 
 from __future__ import annotations

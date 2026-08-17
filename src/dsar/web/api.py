@@ -29,7 +29,7 @@ from typing import Any, Callable, Mapping
 from dsar.auth.errors import ClaimsChallenge, NotAssigned, ReauthRequired
 from dsar.auth.provider import Principal
 from dsar.cases.model import Case
-from dsar.cases.reference import InvalidReference
+from dsar.cases.reference import InvalidReference, encode_reference
 from dsar.cases.service import CaseScope, CaseService
 from dsar.cases.workflow import (
     EXPANDED_SEARCH_NAME,
@@ -482,6 +482,139 @@ def _search_json(search: Any) -> dict[str, Any]:
     }
 
 
+#: Bounded so a dry run stays a dry run: enough for the batch sizes the
+#: product is for (the acceptance bar is 25), small enough that the endpoint
+#: cannot become a bulk anything.
+_BATCH_VALIDATE_MAX_ROWS = 100
+
+#: The only keys a validation row may carry. The batch's subject columns —
+#: names, addresses, aliases — are deliberately NOT accepted here: validating
+#: them needs no server rule, and a validation endpoint that accepted them
+#: would be a subject-data sink with "validate" in its name.
+_BATCH_ROW_KEYS = frozenset({"reference", "received"})
+
+
+def _batch_validate(ctx: Context) -> ApiResult:
+    """Dry-run rule checks for a batch (B-17): references and dates only.
+
+    The batch itself is client-driven — rows live in browser memory and are
+    executed through the same per-case endpoints as the single flow, so this
+    is the one server-side piece: the two fields with server-owned rules
+    (reference shape, received-date bounds), checked by the same code that
+    will enforce them at creation, so the dry run cannot drift from the run.
+    Nothing here touches Graph and nothing is created.
+    """
+    rows = ctx.body.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return 400, {"error": "invalid_input", "message": "rows is required"}
+    if len(rows) > _BATCH_VALIDATE_MAX_ROWS:
+        return 400, {
+            "error": "invalid_input",
+            "message": f"at most {_BATCH_VALIDATE_MAX_ROWS} rows per validation",
+        }
+
+    results: list[dict[str, Any]] = []
+    seen_references: dict[str, int] = {}
+    for index, raw in enumerate(rows):
+        if not isinstance(raw, dict):
+            results.append({"ok": False, "message": "row is not an object"})
+            continue
+        stray = set(raw) - _BATCH_ROW_KEYS
+        if stray:
+            # Refused, not ignored: a subject column arriving here is either a
+            # client bug or an attempt, and both should be loud.
+            results.append(
+                {
+                    "ok": False,
+                    "message": "only reference and received belong in a "
+                    f"validation row; got {', '.join(sorted(stray))}",
+                }
+            )
+            continue
+
+        problems: list[str] = []
+        reference = str(raw.get("reference") or "").strip()
+        try:
+            encode_reference(reference)
+        except InvalidReference as exc:
+            problems.append(str(exc))
+        if reference:
+            first = seen_references.setdefault(reference, index)
+            if first != index:
+                problems.append(
+                    f"duplicate of row {first + 1} — references must be unique"
+                )
+        try:
+            _received_date(str(raw.get("received") or ""))
+        except InvalidReference as exc:
+            problems.append(str(exc))
+
+        results.append(
+            {"ok": not problems, "message": "; ".join(problems) or "ok"}
+        )
+
+    return 200, {
+        "ok": all(r["ok"] for r in results),
+        "rows": results,
+    }
+
+
+def _readiness(ctx: Context) -> ApiResult:
+    """First-run readiness (B-18): the checks that need a session.
+
+    `doctor` diagnoses everything a session is not needed for — packaging,
+    configuration, the audit sink — and could never check these two: it has
+    no token. Whether the operator holds a DSAR role, and whether Purview
+    answers them, are only knowable signed in, so they are checked here and
+    surfaced once at sign-in — a named diagnosis before real work starts,
+    instead of a surprise on the first attempt.
+
+    The Purview probe is the same case-list read the requests view makes
+    (and shares its cache), through the same operations table — no new Graph
+    path exists because of this endpoint.
+    """
+    checks: list[dict[str, Any]] = []
+
+    roles = sorted(ctx.principal.roles)
+    checks.append(
+        {
+            "name": "app role",
+            "ok": bool(roles),
+            "note": (
+                " and ".join(roles)
+                if roles
+                else "no DSAR role in the token — ask for one on the "
+                "application in Microsoft Entra ID"
+            ),
+        }
+    )
+
+    try:
+        ctx.cases.list_requests(ctx.principal, scope=CaseScope.MINE)
+        checks.append(
+            {
+                "name": "purview",
+                "ok": True,
+                "note": "Microsoft Graph reachable and Purview eDiscovery answered",
+            }
+        )
+    except PurviewRoleMissing as exc:
+        checks.append({"name": "purview", "ok": False, "note": str(exc)})
+    except GraphError as exc:
+        checks.append(
+            {
+                "name": "purview",
+                "ok": False,
+                "note": f"Microsoft Graph did not answer: {exc}",
+            }
+        )
+    # ReauthRequired and ClaimsChallenge deliberately propagate: the standard
+    # mapping turns them into the sign-in flows they require, which IS the
+    # readiness answer for those states.
+
+    return 200, {"ready": all(c["ok"] for c in checks), "checks": checks}
+
+
 def _metrics(ctx: Context) -> ApiResult:
     """Accept one workflow-timing event (DSA-A02). Opt-in, allowlisted.
 
@@ -518,6 +651,8 @@ _ROUTES: dict[str, _Handler] = {
     "/api/search/create": _create_search,
     "/api/export": _export,
     "/api/metrics": _metrics,
+    "/api/readiness": _readiness,
+    "/api/batch/validate": _batch_validate,
 }
 
 #: Routed by the ASGI layer. Declared here so the route table and the handler

@@ -150,6 +150,9 @@ whose table was never rebuilt. This is that table.
 | INV-57 | A status cannot land on a page the operator has left | — | `test_a_status_cannot_land_on_a_page_the_operator_left` | test |
 | INV-80 | The front end cannot post a key the server silently discards | `web/static/app.js` | `test_the_expand_payload_keys_are_ones_the_server_reads` | test |
 | INV-91 | The delta checks comparability where it is displayed, against the queries that actually ran, and its mail-item check owns that it is a list, not a parser | `web/static/app.js` | `test_the_delta_checks_comparability_where_it_is_displayed` | test |
+| INV-92 | The two checks that need a session — app role held, Purview answering — run at sign-in and name their fix | `web/api.py` | `test_readiness_names_the_purview_problem_before_work_starts` | test |
+| INV-93 | Batch validation accepts reference and received only — a subject column is refused loudly — and the row count is capped | `web/api.py`, `THREAT-MODEL.md` | `test_batch_validation_checks_rules_without_touching_graph_or_subjects` | test |
+| INV-94 | The batch holds no server-side state: rows live in the browser, run through the audited per-case endpoints, and a retry never repeats a Graph write that succeeded | `THREAT-MODEL.md`, `web/static/app.js` | `test_the_batch_is_client_driven_and_resumes_without_repeating_writes` | test |
 
 ## Correctness with compliance consequences
 

@@ -6,9 +6,13 @@ predecessor's failure mode was not that it broke loudly; it was that it
 degraded silently and correctly reported "no encrypted backend" on a host that
 had one, and nobody could tell whether that was expected.
 
-Phase 0 covers packaging, mode and configuration. Identity, Graph and audit
-checks land with their phases; the registry below is the single place they get
-added, and `report.py` needs no change when they do.
+This file covers everything a session is not needed for: packaging, mode,
+configuration, credential hygiene and the audit sink. The two checks that DO
+need a session — whether the operator holds a DSAR app role, and whether
+Purview eDiscovery answers them — cannot run here, because `doctor` has no
+token and never will. They run at sign-in instead (`/api/readiness`, B-18)
+and surface in the interface, so a first-run operator gets a named diagnosis
+before real work starts rather than a surprise on the first attempt.
 """
 
 from __future__ import annotations
