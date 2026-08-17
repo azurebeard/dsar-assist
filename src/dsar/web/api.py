@@ -475,6 +475,9 @@ def _search_json(search: Any) -> dict[str, Any]:
             "status": stats.status,
             "complete": stats.complete,
             "partial": stats.partial,
+            # Purview's own duration, from the operation's timestamps. The
+            # browser's view of the same fact is quantised by the poll.
+            "run_seconds": stats.run_seconds,
         },
     }
 

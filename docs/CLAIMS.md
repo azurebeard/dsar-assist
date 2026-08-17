@@ -166,6 +166,8 @@ whose table was never rebuilt. This is that table.
 | INV-81 | The metrics package cannot import the modules subject data lives in | `metrics/store.py` | `test_the_metrics_package_cannot_import_subject_bearing_modules` | test |
 | INV-82 | Metrics capture is off by default, and a disabled endpoint refuses and writes nothing | `metrics/store.py`, `README.md` | `test_capture_is_off_by_default_and_the_endpoint_refuses` | test |
 | INV-83 | A metrics event is bounded integers under allowlisted names, and one stray field refuses the whole event | `metrics/store.py`, `BENCHMARK.md` | `test_an_unknown_field_refuses_the_whole_event`, `test_a_string_value_is_refused_even_under_an_allowed_name` | test |
+| INV-88 | An operation metric is a fixed name, a duration and an outcome; a client cannot forge one, and capture off writes nothing | `metrics/store.py` | `test_an_unknown_operation_name_is_refused`, `test_a_client_cannot_forge_an_operation_event`, `test_operation_recording_is_a_noop_when_capture_is_off` | test |
+| INV-89 | An estimate duration comes only from Purview's own operation timestamps, and one the source cannot vouch for is not reported | `cases/model.py` | `test_the_estimate_duration_comes_from_purview_s_own_timestamps` | test |
 
 ## The repository
 

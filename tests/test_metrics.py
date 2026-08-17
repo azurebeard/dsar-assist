@@ -170,3 +170,99 @@ def test_a_torn_line_is_skipped_not_fatal(tmp_path: Path) -> None:
     path.write_text('{"active_ms": 100}\n{"active_ms": 2\n', encoding="utf-8")
     events = read_events(path)
     assert events == [{"active_ms": 100}]
+
+
+# ------------------------------------------------- operations, server-side
+
+
+def test_an_operation_metric_is_recorded_with_name_duration_outcome(
+    tmp_path: Path,
+) -> None:
+    """Server-observed Graph timings: a fixed name, milliseconds, ok."""
+    from dsar.metrics.store import record_operation
+
+    config = _config(tmp_path, DSAR_METRICS="1")
+    record_operation(config, "case_create", 8127, True)
+    record_operation(config, "search_create", 11567, False)
+
+    events = read_events(metrics_path(config))
+    assert [(e["op"], e["ms"], e["ok"]) for e in events] == [
+        ("case_create", 8127, True),
+        ("search_create", 11567, False),
+    ]
+    assert all(e["kind"] == "op" for e in events)
+
+
+def test_an_unknown_operation_name_is_refused(tmp_path: Path) -> None:
+    """The op column must not become a free-text channel — the names are a
+    fixed set even for server-side callers, because a bug is a caller too."""
+    from dsar.metrics.store import record_operation
+
+    config = _config(tmp_path, DSAR_METRICS="1")
+    with pytest.raises(MetricsError, match="unknown operation"):
+        record_operation(config, "subject_lookup", 5, True)
+    assert not metrics_path(config).exists()
+
+
+def test_operation_recording_is_a_noop_when_capture_is_off(tmp_path: Path) -> None:
+    """The same single opt-in gate the endpoint enforces."""
+    from dsar.metrics.store import record_operation
+
+    config = _config(tmp_path)
+    record_operation(config, "case_create", 100, True)
+    assert not metrics_path(config).parent.exists()
+
+
+def test_a_client_cannot_forge_an_operation_event() -> None:
+    """`kind`, `op` and `ms` are server vocabulary. A browser posting them is
+    refused whole, like any other off-allowlist field."""
+    for key in ("kind", "op", "ms"):
+        with pytest.raises(MetricsError, match="not an allowed metric"):
+            validate({key: 1})
+
+
+def test_aggregation_keeps_workflow_and_operation_events_apart(tmp_path: Path) -> None:
+    from dsar.metrics.store import aggregate_operations, record_operation
+
+    config = _config(tmp_path, DSAR_METRICS="1")
+    record(config, validate({"active_ms": 1000}))
+    for ms, ok in ((100, True), (200, True), (900, False)):
+        record_operation(config, "case_create", ms, ok)
+
+    events = read_events(metrics_path(config))
+    fields = aggregate(events)
+    ops = aggregate_operations(events)
+
+    assert fields["active_ms"]["n"] == 1  # the op events did not leak in
+    assert ops["case_create"] == {"n": 3, "failed": 1, "median": 200, "p90": 900}
+
+
+def test_the_workflow_times_its_graph_calls_success_and_failure() -> None:
+    """The recorder hears every attempt — a slow failure and a fast success
+    are different facts, and the benchmark needs both."""
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+
+    heard: list[tuple[str, bool]] = []
+
+    class _Ops:
+        def create_case(self, **kw):  # type: ignore[no-untyped-def]
+            return type(
+                "R", (), {"body": {"id": "case-9", "displayName": kw["display_name"]}}
+            )()
+
+        def create_search(self, **kw):  # type: ignore[no-untyped-def]
+            raise RuntimeError("Graph is unhappy")
+
+    operator = Principal(
+        oid="oid-1", tenant_id="t", roles=frozenset({"DSAR.Operator"})
+    )
+    workflow = Workflow(  # type: ignore[arg-type]
+        _Ops(), operator, None, metrics=lambda op, ms, ok: heard.append((op, ok))
+    )
+
+    workflow.create_case("DSAR-2026-0001")
+    with pytest.raises(RuntimeError):
+        workflow.create_search("case-9", "Naive", 'participants:"a"')
+
+    assert heard == [("case_create", True), ("search_create", False)]

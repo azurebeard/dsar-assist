@@ -902,7 +902,11 @@
   }
 
   function elapsed() {
-    const seconds = Math.round((Date.now() - (state.pollStarted || Date.now())) / 1000);
+    return formatSeconds(
+      Math.round((Date.now() - (state.pollStarted || Date.now())) / 1000));
+  }
+
+  function formatSeconds(seconds) {
     if (seconds < 60) return seconds + "s";
     return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
   }
@@ -952,13 +956,17 @@
         }
         tr.appendChild(el("td", locations));
 
+        // Purview's own duration, from the operation's timestamps — exact,
+        // where this page's elapsed counter is quantised by the poll.
+        const took = (typeof stats.run_seconds === "number")
+          ? " in " + formatSeconds(stats.run_seconds) : "";
         let statusText;
         if (stats.partial) {
           // Not smoothed over. A DSAR response built on a partial count is a
           // compliance problem, not a rounding error.
-          statusText = "complete (partial — some locations not searched)";
+          statusText = "complete" + took + " (partial — some locations not searched)";
         } else if (stats.complete) {
-          statusText = "complete";
+          statusText = "complete" + took;
         } else if (stats.percent_progress) {
           statusText = (stats.status || "running") + " — " + stats.percent_progress + "%";
         } else {
@@ -997,10 +1005,22 @@
           t.both_estimates_ms = Math.round(now - t.submittedAt);
           t.total_ms = Math.round(now - t.flowStarted);
           t.posted = true;
+          // Purview's own per-search durations, echoed from the operation
+          // timestamps — exact where first/both_estimates_ms are quantised
+          // by this page's sixty-second poll.
+          const naiveRow = rows.find((s) => /naive/i.test(s.display_name));
+          const expandedRow = rows.find((s) => /expanded/i.test(s.display_name));
+          if (naiveRow && typeof (naiveRow.statistics || {}).run_seconds === "number") {
+            t.naive_estimate_s = naiveRow.statistics.run_seconds;
+          }
+          if (expandedRow && typeof (expandedRow.statistics || {}).run_seconds === "number") {
+            t.expanded_estimate_s = expandedRow.statistics.run_seconds;
+          }
           const fields = { interactions: t.interactions };
           for (const key of ["active_ms", "case_create_ms", "expand_ms",
                              "searches_submit_ms", "first_estimate_ms",
-                             "both_estimates_ms", "total_ms", "templates_applied"]) {
+                             "both_estimates_ms", "total_ms", "templates_applied",
+                             "naive_estimate_s", "expanded_estimate_s"]) {
             if (typeof t[key] === "number") fields[key] = t[key];
           }
           postMetrics(fields);

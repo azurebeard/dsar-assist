@@ -25,7 +25,7 @@ import json
 import logging
 import os
 import threading
-from typing import Any
+from typing import Any, Callable
 import webbrowser
 from pathlib import Path
 
@@ -44,6 +44,7 @@ from dsar.cases.service import CaseService
 from dsar.cases.workflow import Workflow
 from dsar.graph.client import GraphClient
 from dsar.graph.operations import GraphOperations
+from dsar.metrics.store import MetricsError, record_operation
 from dsar.web.api import API_ENDPOINTS, handle
 from dsar.web.auth_routes import AuthState, callback, current_principal, login, logout
 from dsar.web.security import (
@@ -273,9 +274,29 @@ def _session_services(
     app_client.token_cache = session.cache
     provider = DesktopTokenProvider(app_client, config, session.principal)
     operations = GraphOperations(GraphClient(provider))
+
+    recorder: Callable[[str, int, bool], None] | None = None
+    if config.metrics:
+        # A closure, not an import inside the workflow: the workflow stays
+        # ignorant of where measurements go, and the recorder swallows its own
+        # failures because telemetry must never take down the operation it
+        # measures.
+        def _record_op(op: str, ms: int, ok: bool) -> None:
+            try:
+                record_operation(config, op, ms, ok)
+            except MetricsError as exc:
+                log.warning("operation metric dropped: %s", exc)
+
+        recorder = _record_op
+
     services = (
         CaseService(operations),
-        Workflow(operations, session.principal, request.app.state.auth.trail),
+        Workflow(
+            operations,
+            session.principal,
+            request.app.state.auth.trail,
+            metrics=recorder,
+        ),
     )
     session.case_service = services
     return services

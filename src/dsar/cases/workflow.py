@@ -18,8 +18,12 @@ seen.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date
 from dataclasses import dataclass
+from typing import Callable, TypeVar
+
+_T = TypeVar("_T")
 
 from dsar.audit.record import Action, Outcome
 from dsar.audit.trail import AuditTrail
@@ -77,10 +81,51 @@ class Workflow:
         operations: GraphOperations,
         principal: Principal,
         trail: AuditTrail | None = None,
+        metrics: Callable[[str, int, bool], None] | None = None,
     ) -> None:
         self._ops = operations
         self._principal = principal
         self._trail = trail
+        #: `(operation, milliseconds, ok)`, called around each Graph mutation
+        #: when timing capture is on. A callable rather than an import, so this
+        #: module stays ignorant of where measurements go — and the recorder
+        #: swallows its own failures, because telemetry must never take down
+        #: the operation it measures.
+        self._metrics = metrics
+
+    def _timed(self, op: str, call: Callable[[], _T]) -> _T:
+        """Run one Graph call, telling the recorder how long it took.
+
+        The failure is recorded before the exception continues — a slow
+        failure and a fast success are different facts, and the benchmark
+        needs both.
+        """
+        if self._metrics is None:
+            return call()
+        started = time.monotonic()
+        try:
+            result = call()
+        except Exception:
+            self._tell(op, round((time.monotonic() - started) * 1000), False)
+            raise
+        self._tell(op, round((time.monotonic() - started) * 1000), True)
+        return result
+
+    def _tell(self, op: str, ms: int, ok: bool) -> None:
+        """Invoke the recorder without letting it change anything.
+
+        The caller's closure already swallows its own errors, but that promise
+        lives in a different module — and a recorder that throws on the
+        success path would report a case Purview really created as failed,
+        with no audit record. The containment belongs where the consequence
+        is (WS10 SEC-L-01).
+        """
+        if self._metrics is None:
+            return
+        try:
+            self._metrics(op, ms, ok)
+        except Exception:
+            log.warning("metrics recorder failed for %s; continuing", op)
 
     def _record(
         self,
@@ -149,10 +194,13 @@ class Workflow:
         # writable field on an ediscoveryCase not already carrying something
         # and there is deliberately no `update_case`. Write-once, exactly like
         # the reference — see `cases/received.py`.
-        response = self._ops.create_case(
-            display_name=reference,
-            external_id=external_id,
-            description=encode_received(received, description),
+        response = self._timed(
+            "case_create",
+            lambda: self._ops.create_case(
+                display_name=reference,
+                external_id=external_id,
+                description=encode_received(received, description),
+            ),
         )
         case = parse_case(response.body)
         self._record(
@@ -243,8 +291,11 @@ class Workflow:
             case_id=case_id,
             detail=name,
         )
-        response = self._ops.create_search(
-            case_id=case_id, display_name=name, query=query
+        response = self._timed(
+            "search_create",
+            lambda: self._ops.create_search(
+                case_id=case_id, display_name=name, query=query
+            ),
         )
         search = parse_search(response.body)
         # The search's name and identifier, never its query. The KQL names a
@@ -268,7 +319,10 @@ class Workflow:
         it; run them beforehand and present completed statistics.
         """
         self._require_write("Running an estimate", Action.ESTIMATE_STARTED, case_id)
-        self._ops.run_search(case_id=case_id, search_id=search_id)
+        self._timed(
+            "estimate_start",
+            lambda: self._ops.run_search(case_id=case_id, search_id=search_id),
+        )
         self._record(
             Action.ESTIMATE_STARTED,
             Outcome.OK,

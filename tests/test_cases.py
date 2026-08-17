@@ -380,3 +380,52 @@ def test_the_expansion_json_names_former_names_and_employee_id() -> None:
     # Matched against the directory, never searched.
     assert data["employee_id"] == "E-2214"
     assert "E-2214" not in data["kql"]
+
+
+def test_the_estimate_duration_comes_from_purview_s_own_timestamps() -> None:
+    """`run_seconds` is Graph's completedDateTime minus createdDateTime —
+    exact, where the browser's view of the same fact is quantised by a
+    sixty-second poll. Absent, malformed or reversed timestamps, or an
+    estimate still running, all answer None: a duration the source cannot
+    vouch for is not reported as one it can."""
+    from dsar.cases.model import parse_search
+
+    def search(operation: dict) -> dict:
+        return {"id": "s", "displayName": "n", "lastEstimateStatisticsOperation": operation}
+
+    done = parse_search(search({
+        "status": "succeeded",
+        "createdDateTime": "2026-08-17T14:08:19.28Z",
+        "completedDateTime": "2026-08-17T14:12:41.9Z",
+    }))
+    assert done.statistics.run_seconds == 262
+
+    running = parse_search(search({
+        "status": "running",
+        "createdDateTime": "2026-08-17T14:08:19Z",
+    }))
+    assert running.statistics.run_seconds is None
+
+    reversed_ts = parse_search(search({
+        "status": "succeeded",
+        "createdDateTime": "2026-08-17T14:12:00Z",
+        "completedDateTime": "2026-08-17T14:08:00Z",
+    }))
+    assert reversed_ts.statistics.run_seconds is None
+
+    garbage = parse_search(search({
+        "status": "succeeded",
+        "createdDateTime": "not a time",
+        "completedDateTime": "2026-08-17T14:08:00Z",
+    }))
+    assert garbage.statistics.run_seconds is None
+
+    # One naive, one aware: both PARSE, then the subtraction raises TypeError
+    # — which, uncaught, 500'd the entire case view over a field this helper
+    # exists to shrug at (WS10 SEC-M-01, caught in review).
+    mixed = parse_search(search({
+        "status": "succeeded",
+        "createdDateTime": "2026-08-17T14:08:00",
+        "completedDateTime": "2026-08-17T14:12:00Z",
+    }))
+    assert mixed.statistics.run_seconds is None

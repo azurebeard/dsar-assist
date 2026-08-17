@@ -29,7 +29,28 @@ Every captured field is one or the other, never a mixture:
 | `searches_submit_ms` | backend | Creating and starting both searches |
 | `first_estimate_ms` | backend | Submission to the first complete estimate |
 | `both_estimates_ms` | backend | Submission to both estimates complete |
+| `naive_estimate_s` | backend | Purview's own naive-estimate duration, from the operation's timestamps |
+| `expanded_estimate_s` | backend | The same for the expanded estimate |
 | `total_ms` | both | Form entry to both estimates complete |
+
+Two of those deserve a note. `first_estimate_ms` and `both_estimates_ms` are
+the browser's view and are quantised by its sixty-second poll;
+`naive_estimate_s` and `expanded_estimate_s` are read from the Purview
+operation's own `createdDateTime` and `completedDateTime`, so they are exact.
+Where the two disagree, the seconds figures are the estimate's truth and the
+milliseconds figures are the operator's experience of waiting for it —
+both are real, and they answer different questions. One provenance caveat:
+the two seconds fields are read from Graph server-side but travel to the
+store via the browser's one-shot post, so unlike the per-operation events
+below they pass through the client on the way. Bounded integers either way;
+a benchmark quoting them as evidence should say "client-echoed" rather than
+"server-observed".
+
+The server also records one event per Graph mutation it performs — operation
+name from a fixed set (`case_create`, `search_create`, `estimate_start`),
+duration and outcome, nothing else. Unlike the workflow summary these cover
+every attempt, including failures and abandoned flows, so the failure rate
+and the retry cost are measurable rather than remembered.
 
 ## What is captured, and what cannot be
 

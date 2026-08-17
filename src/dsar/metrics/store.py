@@ -35,11 +35,14 @@ from dsar.config import Config, ensure_private_dir
 
 __all__ = [
     "ALLOWED_FIELDS",
+    "OPERATIONS",
     "MetricsError",
     "validate",
     "record",
+    "record_operation",
     "read_events",
     "aggregate",
+    "aggregate_operations",
     "metrics_path",
 ]
 
@@ -61,7 +64,20 @@ ALLOWED_FIELDS: Mapping[str, tuple[int, int]] = {
     "total_ms": (0, _DAY_MS),
     "interactions": (0, 10_000),
     "templates_applied": (0, 100),
+    # Purview's own estimate durations, read from the operation's timestamps
+    # server-side and echoed back through the case payload — exact where the
+    # browser's poll-derived figures are quantised. Seconds, and bounded by a
+    # week: an estimate that ran longer is a fact for an incident review, not
+    # a telemetry point.
+    "naive_estimate_s": (0, 7 * 24 * 60 * 60),
+    "expanded_estimate_s": (0, 7 * 24 * 60 * 60),
 }
+
+#: Server-side operation timings (DSA-G01 groundwork). Written by the
+#: workflow's recorder, never by a client — the names are this fixed set and
+#: `record_operation` refuses anything else, so the op column cannot become a
+#: free-text channel.
+OPERATIONS = frozenset({"case_create", "search_create", "estimate_start"})
 
 
 class MetricsError(Exception):
@@ -99,6 +115,25 @@ def validate(body: Mapping[str, Any]) -> dict[str, int]:
 
 def record(config: Config, fields: Mapping[str, int]) -> None:
     """Append one validated event. The caller has already run `validate`."""
+    _append(config, dict(fields))
+
+
+def record_operation(config: Config, op: str, ms: int, ok: bool) -> None:
+    """One server-observed Graph operation: name, duration, outcome.
+
+    Server-only — no client input reaches this path, and the endpoint's
+    `validate` refuses `kind`/`op`/`ms` outright, so a browser cannot forge an
+    operation event. A no-op when capture is off: the single opt-in gate the
+    endpoint enforces, enforced here for the same reason.
+    """
+    if not config.metrics:
+        return
+    if op not in OPERATIONS:
+        raise MetricsError(f"unknown operation {op!r}")
+    _append(config, {"kind": "op", "op": op, "ms": int(ms), "ok": bool(ok)})
+
+
+def _append(config: Config, payload: dict[str, Any]) -> None:
     path = metrics_path(config)
     try:
         ensure_private_dir(path.parent)
@@ -106,7 +141,7 @@ def record(config: Config, fields: Mapping[str, int]) -> None:
             "ts": round(time.time(), 3),
             "mode": config.mode.value,
             "version": __version__,
-            **fields,
+            **payload,
         }
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, separators=(",", ":")) + "\n")
@@ -142,9 +177,12 @@ def _percentile(ordered: list[int], fraction: float) -> int:
 def aggregate(events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     """Per-field count, median and p90 across every event carrying the field."""
     out: dict[str, dict[str, int]] = {}
+    workflow_events = [e for e in events if e.get("kind") != "op"]
     for field in ALLOWED_FIELDS:
         values = sorted(
-            v for e in events if isinstance(v := e.get(field), int) and not isinstance(v, bool)
+            v
+            for e in workflow_events
+            if isinstance(v := e.get(field), int) and not isinstance(v, bool)
         )
         if not values:
             continue
@@ -152,5 +190,29 @@ def aggregate(events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
             "n": len(values),
             "median": _percentile(values, 0.5),
             "p90": _percentile(values, 0.9),
+        }
+    return out
+
+
+def aggregate_operations(events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Per-operation count, failure count, median and p90 duration."""
+    out: dict[str, dict[str, int]] = {}
+    for op in sorted(OPERATIONS):
+        mine = [
+            e
+            for e in events
+            if e.get("kind") == "op"
+            and e.get("op") == op
+            and isinstance(e.get("ms"), int)
+            and not isinstance(e.get("ms"), bool)
+        ]
+        if not mine:
+            continue
+        durations = sorted(e["ms"] for e in mine)
+        out[op] = {
+            "n": len(mine),
+            "failed": sum(1 for e in mine if e.get("ok") is False),
+            "median": _percentile(durations, 0.5),
+            "p90": _percentile(durations, 0.9),
         }
     return out

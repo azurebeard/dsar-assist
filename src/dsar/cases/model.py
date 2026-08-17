@@ -12,7 +12,7 @@ identical counts is what eventually surfaced it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Mapping
 
 from dsar.cases.deadline import Deadline, deadline_for
@@ -81,6 +81,11 @@ class Statistics:
     complete: bool = False
     #: True when it finished against some locations but not all.
     partial: bool = False
+    #: How long Purview took, from the operation's OWN timestamps
+    #: (`createdDateTime` to `completedDateTime`) — exact, where the browser's
+    #: view of the same fact is quantised by a sixty-second poll and dies with
+    #: the tab. None until complete, or when either timestamp is missing.
+    run_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -174,7 +179,38 @@ def _parse_statistics(raw: Mapping[str, Any]) -> Statistics:
         status=status,
         complete=complete,
         partial=partial,
+        run_seconds=(
+            _seconds_between(
+                operation.get("createdDateTime"), operation.get("completedDateTime")
+            )
+            if complete
+            else None
+        ),
     )
+
+
+def _seconds_between(start: Any, end: Any) -> int | None:
+    """Whole seconds between two Graph timestamps, or None.
+
+    Graph writes ISO-8601 with a `Z` suffix. Anything that does not parse, a
+    missing value, or an end before its start all answer None — a duration
+    the source cannot vouch for is not reported as one it can.
+    """
+    if not isinstance(start, str) or not isinstance(end, str):
+        return None
+    try:
+        started = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        completed = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        # Inside the try: one aware and one naive timestamp parse fine and
+        # then raise TypeError on subtraction — which, uncaught, turned the
+        # whole case view into a 500 over a field this function exists to
+        # shrug at (WS10 SEC-M-01, caught in review before it shipped).
+        seconds = (completed - started).total_seconds()
+    except (ValueError, TypeError):
+        return None
+    if seconds < 0:
+        return None
+    return int(seconds)
 
 
 def _int_or_none(value: Any) -> int | None:
