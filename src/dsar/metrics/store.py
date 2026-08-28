@@ -26,6 +26,7 @@ package unable to import the modules those live in.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -133,6 +134,13 @@ def record_operation(config: Config, op: str, ms: int, ok: bool) -> None:
     _append(config, {"kind": "op", "op": op, "ms": int(ms), "ok": bool(ok)})
 
 
+#: One writer at a time. Handlers run in a threadpool (B-31), and two
+#: operation events landing in the same instant would otherwise be two
+#: `write` calls racing for one append — a torn line the reader skips, which
+#: is tolerated but not invited.
+_WRITE_LOCK = threading.Lock()
+
+
 def _append(config: Config, payload: dict[str, Any]) -> None:
     path = metrics_path(config)
     try:
@@ -143,8 +151,9 @@ def _append(config: Config, payload: dict[str, Any]) -> None:
             "version": __version__,
             **payload,
         }
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, separators=(",", ":")) + "\n")
+        line = json.dumps(event, separators=(",", ":")) + "\n"
+        with _WRITE_LOCK, path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
     except OSError as exc:
         raise MetricsError(f"the metrics store is not writable: {exc}") from exc
 

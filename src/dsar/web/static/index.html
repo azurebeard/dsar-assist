@@ -9,7 +9,7 @@
 <body>
 <header>
   <h1>DSAR Assist</h1>
-  <nav id="nav" hidden>
+  <nav id="nav" aria-label="Views" hidden>
     <button class="tab" data-view="requests" type="button">Requests</button>
     <button class="tab" data-view="new-request" type="button">New request</button>
     <button class="tab" data-view="batch" type="button">Batch</button>
@@ -25,6 +25,14 @@
     <span id="status-text"></span>
   </div>
 
+  <!-- Under the status bar, not at the foot of a long page: an error that
+       renders below the fold is an error nobody sees. `role="alert"` so it
+       is announced. -->
+  <section id="error" class="error" role="alert" hidden>
+    <h2 id="error-title" tabindex="-1">Something went wrong</h2>
+    <p id="error-detail" class="muted"></p>
+  </section>
+
   <section id="signed-out" hidden>
     <h2>Sign in</h2>
     <p>
@@ -38,7 +46,7 @@
   <!-- ------------------------------------------------------- requests -->
   <section id="view-requests" class="view" hidden>
     <div class="row">
-      <h2>DSAR requests</h2>
+      <h2 tabindex="-1">DSAR requests</h2>
       <div id="scope-controls" hidden>
         <label for="scope">Show</label>
         <select id="scope">
@@ -48,79 +56,108 @@
       </div>
     </div>
     <p id="scope-note" class="muted small" hidden></p>
+    <div id="list-controls" class="list-controls" hidden>
+      <label for="requests-filter" class="visually-hidden">Filter by reference</label>
+      <input id="requests-filter" type="search" placeholder="Filter by reference" autocomplete="off" spellcheck="false">
+      <label for="requests-order">Order</label>
+      <select id="requests-order">
+        <option value="newest">Newest first</option>
+        <option value="due">Due soonest first</option>
+      </select>
+      <label class="check"><input id="requests-closed" type="checkbox"> Show closed cases</label>
+    </div>
     <p id="requests-empty" class="muted" hidden>
       No DSAR cases yet. Cases created by this tool carry a reference and appear
       here; anything created directly in the Purview portal does not.
     </p>
-    <table id="requests-table" hidden>
-      <thead>
-        <tr><th>Reference</th><th>Case</th><th>Status</th><th>Received</th><th>Due</th><th></th></tr>
-      </thead>
-      <tbody id="requests-body"></tbody>
-    </table>
+    <div class="table-wrap">
+      <table id="requests-table" hidden>
+        <thead>
+          <tr><th>Reference</th><th>Received</th><th>Due</th><th><span class="visually-hidden">Actions</span></th></tr>
+        </thead>
+        <tbody id="requests-body"></tbody>
+      </table>
+    </div>
+    <p id="requests-hidden" class="muted small" hidden></p>
     <p id="requests-source" class="muted small"></p>
   </section>
 
   <!-- ---------------------------------------------------- new request -->
   <section id="view-new-request" class="view" hidden>
-    <h2>New request</h2>
-    <p class="muted">
-      Step 1 creates the eDiscovery case. Step 2 works out who the subject is
-      and shows you the query before anything runs.
-    </p>
+    <h2 tabindex="-1">New request</h2>
+    <ol class="stepper" aria-label="Progress">
+      <li data-stage="request" class="current">The request</li>
+      <li data-stage="subject">The person</li>
+      <li data-stage="queries">The two searches</li>
+      <li data-stage="run">Run</li>
+    </ol>
 
-    <fieldset>
+    <fieldset id="request-fieldset">
       <legend>1 · The request</legend>
-      <label for="reference">DSAR reference</label>
-      <input id="reference" type="text" placeholder="DSAR-2026-0142" autocomplete="off">
-      <p class="muted small">
-        Stored on the case so it can be found from any machine, and shown in the
-        Purview portal.
-      </p>
+      <p id="request-summary" class="summary" hidden></p>
+      <div class="fields">
+        <label for="reference">DSAR reference</label>
+        <input id="reference" type="text" placeholder="DSAR-2026-0142" autocomplete="off" spellcheck="false">
+        <p class="muted small">
+          A ticket or file number, never the person's name: it is written to a
+          permanent audit record and shown in the Purview portal.
+        </p>
+        <p id="reference-warning" class="warn small" hidden></p>
 
-      <label for="received">Date received</label>
-      <input id="received" type="date" autocomplete="off">
-      <p class="muted small">
-        The day the request arrived — not today, unless it arrived today. The
-        statutory clock is <strong>one calendar month from receipt</strong>, so
-        this is what the deadline is calculated from. Extensions and clock
-        pauses are not modelled; the date shown is the baseline.
-      </p>
-      <p class="warn small">
-        Recorded once, when the case is created, and not editable here. To
-        correct it afterwards, edit the case description in the Purview portal.
-        Leave it blank and the deadline shows as not recorded rather than being
-        guessed from the creation date.
-      </p>
+        <label for="received">Date received</label>
+        <input id="received" type="date" autocomplete="off">
+        <p class="muted small">
+          The day the request arrived. The deadline is one calendar month from
+          this date, recorded once when the case is created.
+          <span id="received-echo"></span>
+        </p>
+        <details class="help">
+          <summary>Why this matters</summary>
+          <p class="muted small">
+            The statutory clock is one calendar month from receipt, not from
+            when the case was opened, so the deadline is calculated from this
+            date. Extensions and clock pauses are not modelled; the date shown
+            is the baseline. The date is not editable here afterwards: to
+            correct it, edit the case description in the Purview portal. Left
+            blank, the deadline shows as not recorded rather than being guessed
+            from the creation date.
+          </p>
+        </details>
 
-      <button id="create-case" class="button" type="button">Create case</button>
-      <p id="case-created" class="ok small" hidden></p>
+        <button id="create-case" class="button" type="button">Create case</button>
+        <p id="case-created" class="ok small" hidden></p>
+      </div>
     </fieldset>
 
-    <fieldset id="subject-fieldset" disabled>
-      <legend>2 · The data subject</legend>
+    <!-- Not disabled while the case is being created: the operator can type
+         the person in during Purview's fifteen to thirty seconds. Only the
+         button that needs the case id waits for it. -->
+    <fieldset id="subject-fieldset">
+      <legend>2 · The person the request is about</legend>
+      <p id="subject-hint" class="muted small">
+        You can fill this in while the case is being created.
+      </p>
 
       <label for="primary-email">Primary email</label>
-      <input id="primary-email" type="email" placeholder="meganb@example.com" autocomplete="off">
+      <input id="primary-email" type="email" placeholder="meganb@example.com" autocomplete="off" spellcheck="false">
 
       <label for="display-name">Full name</label>
-      <input id="display-name" type="text" placeholder="Megan Bowen" autocomplete="off">
+      <input id="display-name" type="text" placeholder="Megan Bowen" autocomplete="off" spellcheck="false">
 
       <label for="other-emails">Other addresses <span class="muted">(one per line)</span></label>
-      <textarea id="other-emails" rows="2" placeholder="megan.bowen.personal@example.com"></textarea>
+      <textarea id="other-emails" rows="2" placeholder="megan.bowen.personal@example.com" autocomplete="off" spellcheck="false"></textarea>
 
       <label for="nicknames">Nicknames and former names <span class="muted">(one per line)</span></label>
-      <textarea id="nicknames" rows="2" placeholder="Meg"></textarea>
+      <textarea id="nicknames" rows="2" placeholder="Meg" autocomplete="off" spellcheck="false"></textarea>
       <p class="muted small">
-        A nickname is knowledge, not a directory field — expansion cannot
-        discover it, and in testing it was worth an extra location the naive
-        query never looked at.
+        The directory cannot know a nickname; in testing one was worth an
+        extra location the plain search never looked at.
       </p>
 
       <label for="employee-id">Employee ID</label>
-      <input id="employee-id" type="text" placeholder="E-4411" autocomplete="off">
+      <input id="employee-id" type="text" placeholder="E-4411" autocomplete="off" spellcheck="false">
 
-      <button id="expand" class="button" type="button">Resolve identity</button>
+      <button id="expand" class="button" type="button" disabled>Find everything known about this person</button>
       <p id="expand-note" class="muted small" hidden></p>
     </fieldset>
 
@@ -128,26 +165,36 @@
     <section id="expansion" hidden>
       <!-- Not "what the directory knows": operator-supplied identifiers land
            in the same box, and the groups below say where each came from. -->
-      <h3>The subject, resolved</h3>
+      <h3 id="expansion-title" tabindex="-1">The person, as the search will look for them</h3>
+      <p class="muted small">
+        Check that everything here is this person, and nothing that is not.
+      </p>
       <div id="identifiers"></div>
       <p id="expansion-warnings" class="warn small" hidden></p>
 
-      <h3>Two queries</h3>
+      <h3>Two searches</h3>
       <p class="muted small">
-        Both are editable. An expansion is a set of inferences about who someone
-        is, and inferences belong in front of the person accountable for the
-        search rather than inside it. Nothing runs until you say so.
+        Both run. The difference between them is what a primary-address search
+        alone would have missed. Nothing runs until you say so.
       </p>
 
       <div class="query-block">
-        <label for="kql-naive">Naive — primary address only</label>
-        <textarea id="kql-naive" rows="3" spellcheck="false"></textarea>
+        <label for="kql-naive">Primary address only <span class="muted">(the naive search)</span></label>
+        <p id="summary-naive" class="query-summary"></p>
+        <div id="narrowings-naive" class="narrowings"></div>
+        <textarea id="kql-naive" rows="3" spellcheck="false" autocomplete="off" aria-describedby="summary-naive"></textarea>
       </div>
 
       <div class="query-block">
-        <label for="kql-expanded">Expanded — resolved identifiers and mentions</label>
-        <textarea id="kql-expanded" rows="6" spellcheck="false"></textarea>
+        <label for="kql-expanded">Everything known <span class="muted">(the expanded search)</span></label>
+        <p id="summary-expanded" class="query-summary"></p>
+        <div id="narrowings-expanded" class="narrowings"></div>
+        <textarea id="kql-expanded" rows="6" spellcheck="false" autocomplete="off" aria-describedby="summary-expanded"></textarea>
       </div>
+      <p class="muted small">
+        The text boxes are the searches exactly as Purview will run them. You
+        can edit them; if you do, the page says so above the box.
+      </p>
 
       <p id="comparability" class="warn small" hidden></p>
 
@@ -157,17 +204,13 @@
         </button>
       </p>
 
-      <details>
-        <summary>Narrow it further</summary>
+      <details id="narrow">
+        <summary>Narrow it further (optional)</summary>
         <p class="muted small">
-          Each narrowing stacks onto the query above with AND, wrapped in
-          parentheses so it cannot change what the query already meant.
-        </p>
-        <p class="muted small">
-          Apply to <strong>both</strong> queries unless you mean otherwise. The
-          delta is only the expansion&rsquo;s contribution while the two queries
-          differ by the expansion and nothing else — a narrowing on one side
-          alone measures the narrowing instead, and can read backwards.
+          Each narrowing is added to the search with AND, so it can only make
+          the search smaller. Apply to <strong>both</strong> searches unless
+          you mean otherwise: a narrowing on one side alone changes what the
+          difference between them means, and the page warns when that happens.
         </p>
         <div id="templates" class="templates"></div>
       </details>
@@ -176,38 +219,41 @@
         <button id="run-both" class="button" type="button">Create and run both searches</button>
       </p>
       <ol id="run-progress" class="steps" hidden>
-        <li data-step="naive">Create the naive search</li>
+        <li data-step="naive">Create the primary-address search</li>
         <li data-step="naive-run">Start its estimate</li>
-        <li data-step="expanded">Create the expanded search</li>
+        <li data-step="expanded">Create the everything-known search</li>
         <li data-step="expanded-run">Start its estimate</li>
       </ol>
       <p class="muted small">
-        Estimation runs in Purview and can take a while. Run these ahead of any
-        demonstration and present completed numbers rather than waiting on the
-        day.
+        Purview usually takes a minute or two to estimate. You can leave the
+        page; the case shows progress and updates on its own.
       </p>
     </section>
   </section>
 
-  <!-- --------------------------------------------------- case detail -->
   <!-- ------------------------------------------------------------- batch -->
 <section id="view-batch" class="view" hidden>
-  <h2>Batch — many requests, one sitting</h2>
+  <h2 tabindex="-1">Batch — many requests, one sitting</h2>
   <p class="muted small">
     Paste rows or choose a CSV. The file is read by your browser and never
     uploaded: each row runs through the same audited steps as a single
     request — case, identity, both searches — two rows at a time. Estimates
     are started and left to run; review each case from the Requests list.
+    The CSV file itself stays on your computer; delete it when the batch is
+    done.
   </p>
 
   <label for="batch-input">Rows
     <span class="muted">(header:
     reference,received,primary_email,display_name,nicknames,other_emails,employee_id;
-    separate multiple nicknames or addresses with a semicolon)</span>
+    received as YYYY-MM-DD; separate multiple nicknames or addresses with a
+    semicolon)</span>
   </label>
-  <textarea id="batch-input" rows="6" spellcheck="false"
+  <p><button id="batch-header" class="linklike small" type="button">Insert the header row</button></p>
+  <textarea id="batch-input" rows="6" spellcheck="false" autocomplete="off"
     placeholder="reference,received,primary_email,display_name,nicknames&#10;DSAR-2026-0201,2026-08-12,jordan.hale@contoso.com,Jordan Hale,Jay Hale"></textarea>
   <p>
+    <label for="batch-file">Or choose a CSV file</label>
     <input id="batch-file" type="file" accept=".csv,text/csv">
   </p>
 
@@ -219,25 +265,29 @@
   </p>
   <p id="batch-note" class="muted small" hidden></p>
 
-  <table id="batch-table" hidden>
-    <thead>
-      <tr><th>Reference</th><th>Received</th><th>Subject</th><th>Status</th></tr>
-    </thead>
-    <tbody id="batch-body"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table id="batch-table" hidden>
+      <thead>
+        <tr><th>Reference</th><th>Received</th><th>Subject</th><th>Status</th></tr>
+      </thead>
+      <tbody id="batch-body"></tbody>
+    </table>
+  </div>
 </section>
 
 <section id="view-case" class="view" hidden>
     <div class="row">
-      <h2 id="case-title">Case</h2>
+      <h2 id="case-title" tabindex="-1">Case</h2>
       <button id="back" class="button secondary" type="button">Back to requests</button>
     </div>
-    <table id="searches-table" hidden>
-      <thead>
-        <tr><th>Search</th><th>Items</th><th>Locations</th><th>Status</th><th></th></tr>
-      </thead>
-      <tbody id="searches-body"></tbody>
-    </table>
+    <div class="table-wrap">
+      <table id="searches-table" hidden>
+        <thead>
+          <tr><th>Search</th><th>Items</th><th>Locations</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr>
+        </thead>
+        <tbody id="searches-body"></tbody>
+      </table>
+    </div>
     <p id="delta" class="delta" hidden></p>
     <p id="searches-empty" class="muted" hidden>No searches in this case yet.</p>
     <p id="poll-note" class="muted small" hidden></p>
@@ -246,12 +296,7 @@
         Refresh now
       </button>
     </p>
-    <p id="case-portal" class="muted small"></p>
-  </section>
-
-  <section id="error" hidden>
-    <h2>Something went wrong</h2>
-    <p id="error-detail" class="muted"></p>
+    <p id="case-portal" class="portal"></p>
   </section>
 
   <footer>

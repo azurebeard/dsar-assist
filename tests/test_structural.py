@@ -1177,3 +1177,34 @@ def test_the_statutory_arithmetic_is_pure() -> None:
 
     permitted = {"__future__", "calendar", "dataclasses", "datetime"}
     assert imported <= permitted, f"deadline.py imports {sorted(imported - permitted)}"
+
+
+def test_subject_fields_refuse_enhanced_spell_check() -> None:
+    """WS10 SEC-M-04. Chrome and Edge "enhanced spell check" transmit the
+    contents of spell-checked fields to a third party as the operator types.
+    The two KQL boxes and the batch textarea were protected; the fields where
+    the subject's name, personal addresses and aliases are actually typed were
+    not — a disclosure of a data subject's personal data the threat model's
+    "no second ungoverned copy" asset statement never anticipated. Every
+    field that can carry subject data opts out, including the template inputs
+    rendered at runtime, and this test is what stops a new field forgetting.
+    """
+    html = (REPO_ROOT / "src" / "dsar" / "web" / "static" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    for field_id in (
+        "reference", "primary-email", "display-name", "other-emails",
+        "nicknames", "employee-id", "batch-input", "kql-naive", "kql-expanded",
+        "requests-filter",
+    ):
+        tag = re.search(r'<(?:input|textarea)\b[^>]*\bid="%s"[^>]*>' % field_id, html)
+        assert tag, f"no field with id {field_id!r}"
+        assert 'spellcheck="false"' in tag.group(0), f"{field_id} is spell-checked"
+        assert 'autocomplete="off"' in tag.group(0), f"{field_id} is autocompleted"
+
+    js = (REPO_ROOT / "src" / "dsar" / "web" / "static" / "app.js").read_text(
+        encoding="utf-8"
+    )
+    template = js.split("function renderTemplate(template)", 1)[1].split("\n  }", 1)[0]
+    assert "field.spellcheck = false" in template
+    assert 'field.autocomplete = "off"' in template

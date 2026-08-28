@@ -336,6 +336,12 @@ def _received_date(raw: str, today: date | None = None) -> date | None:
 #: into a record nobody can erase (WS10 SEC-M-01).
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
+#: The one clause every generated query carries. Quoted phrases are blanked
+#: before matching, for the same reason the client's mail-item scan blanks
+#: them: `"participants: all staff"` in an employment vocabulary is a phrase.
+_PARTICIPANTS_CLAUSE = re.compile(r"\bparticipants\s*:", re.IGNORECASE)
+_QUOTED_PHRASE = re.compile(r'"[^"]*"')
+
 
 def _malformed_id(name: str) -> ApiResult:
     return 400, {
@@ -418,11 +424,30 @@ def _create_search(ctx: Context) -> ApiResult:
     if not _IDENTIFIER.match(case_id):
         return _malformed_id("case_id")
 
+    # A shape check, not a parser. Both generated queries and every reviewed
+    # narrowing carry a `participants:` clause, so a query without one is a
+    # query the operator edited down to bare text — which, for a common name,
+    # is an estate-wide search under their delegated identity (WS10
+    # SEC-M-01). Refused unless the page asked and the operator said yes; the
+    # confirmation flag is the record that they did, and it is not audited
+    # because the query itself must not be.
+    unscoped = not _PARTICIPANTS_CLAUSE.search(_QUOTED_PHRASE.sub('""', query))
+    if unscoped and not ctx.body.get("confirm_unscoped"):
+        return 400, {
+            "error": "unscoped_query",
+            "message": "This query carries no participants: clause, so it "
+            "would search every mailbox and site for the words alone. Put the "
+            "address back, or confirm that an unscoped search is what you mean.",
+        }
+
     kind = ctx.text("kind", "expanded")
     default_name = NAIVE_SEARCH_NAME if kind == "naive" else EXPANDED_SEARCH_NAME
     name = ctx.text("name") or default_name
 
-    search = ctx.workflow.create_search(case_id, name, query)
+    # The confirmation is written down, the way the smaller-export one is: a
+    # fixed phrase in the audit detail, never the query (WS10 gate SEC-L-02).
+    note = "unscoped query run after explicit confirmation" if unscoped else ""
+    search = ctx.workflow.create_search(case_id, name, query, note=note)
     if ctx.body.get("run", True):
         ctx.workflow.run_estimate(case_id, search.id)
     return 201, _search_json(search)
@@ -440,11 +465,21 @@ def _export(ctx: Context) -> ApiResult:
     if not _IDENTIFIER.match(search_id):
         return _malformed_id("search_id")
 
+    # The page gates the export of the smaller search behind a confirmation
+    # that states the difference (WS10 SEC-M-02). The choice travels here as
+    # a flag and lands in the audit detail — never a count, never a query —
+    # so the trail can answer "why was the narrower search exported".
+    note = (
+        "smaller search exported after explicit confirmation"
+        if ctx.body.get("confirmed_smaller")
+        else ""
+    )
     handoff = ctx.workflow.initiate_export(
         case_id,
         search_id,
         ctx.text("name") or "DSAR export",
         purview_case_url(case_id, ctx.config.tenant_id),
+        note=note,
     )
     return 202, {
         "case_id": handoff.case_id,

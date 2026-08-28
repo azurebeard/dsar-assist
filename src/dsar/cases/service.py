@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -74,6 +75,12 @@ class CaseService:
     def __init__(self, operations: GraphOperations) -> None:
         self._ops = operations
         self._cache: tuple[float, tuple[Case, ...], bool] | None = None
+        #: Handlers run in a threadpool (B-31). Two list reads on one session
+        #: at the same instant — the readiness probe and the requests view
+        #: fire together at sign-in — would otherwise both miss the cache and
+        #: both walk the tenant. Held across the read so the second waits for
+        #: the first's result instead of repeating its Graph calls.
+        self._lock = threading.Lock()
 
     def list_requests(
         self,
@@ -82,7 +89,12 @@ class CaseService:
         scope: CaseScope = CaseScope.MINE,
         force: bool = False,
     ) -> CaseListing:
-        cases, truncated = self._all_ours(force=force)
+        # The read's own timestamp travels with its result. Re-reading
+        # `self._cache` afterwards raced a concurrent `invalidate()` from a
+        # batch case-create now that handlers run concurrently, and the
+        # assertion that used to sit there became a 500 on the request list
+        # (WS10 gate SEC-L-01).
+        cases, truncated, fetched_at = self._all_ours(force=force)
 
         # Whether the toggle is worth offering. If every case this operator can
         # see was created by them, ALL and MINE are the same list and a toggle
@@ -105,10 +117,9 @@ class CaseService:
         else:
             visible = cases
 
-        assert self._cache is not None
         return CaseListing(
             cases=visible,
-            fetched_at=self._cache[0],
+            fetched_at=fetched_at,
             scope_toggle_useful=others,
             truncated=truncated,
         )
@@ -196,10 +207,15 @@ class CaseService:
         """Drop the read cache. Called after anything that creates a case."""
         self._cache = None
 
-    def _all_ours(self, *, force: bool) -> tuple[tuple[Case, ...], bool]:
+    def _all_ours(self, *, force: bool) -> tuple[tuple[Case, ...], bool, float]:
+        """Cases, truncated flag, and when the underlying read happened."""
+        with self._lock:
+            return self._all_ours_locked(force=force)
+
+    def _all_ours_locked(self, *, force: bool) -> tuple[tuple[Case, ...], bool, float]:
         now = time.monotonic()
         if not force and self._cache and now - self._cache[0] < CACHE_TTL_SECONDS:
-            return self._cache[1], self._cache[2]
+            return self._cache[1], self._cache[2], self._cache[0]
 
         collected: list[Case] = []
         skip_token = ""
@@ -231,8 +247,9 @@ class CaseService:
 
         collected.sort(key=lambda c: c.created, reverse=True)
         cases = tuple(collected)
-        self._cache = (time.monotonic(), cases, truncated)
-        return cases, truncated
+        fetched_at = time.monotonic()
+        self._cache = (fetched_at, cases, truncated)
+        return cases, truncated, fetched_at
 
 
 def _skip_token(next_link: Any) -> str:

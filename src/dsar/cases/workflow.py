@@ -283,20 +283,28 @@ class Workflow:
 
     # -------------------------------------------------------------- searches
 
-    def create_search(self, case_id: str, name: str, query: str) -> Search:
+    def create_search(
+        self, case_id: str, name: str, query: str, *, note: str = ""
+    ) -> Search:
         """Create a search from the query **the operator approved**.
 
         `query` is whatever came back from the review step, edited or not. It is
         never regenerated here: a query the operator saw and a query that runs
         must be the same string, or the review means nothing.
+
+        `note` lands in the audit detail beside the name and nowhere else. The
+        web layer uses it to record that the operator confirmed running a
+        query with no participants clause; the query itself is still never
+        written.
         """
         self._require_write("Creating a search", Action.SEARCH_CREATED, case_id)
+        detail = f"{name} — {note}" if note else name
         self._record(
             Action.SEARCH_CREATED,
             Outcome.ATTEMPTED,
             target_id=case_id,
             case_id=case_id,
-            detail=name,
+            detail=detail,
         )
         response = self._timed(
             "search_create",
@@ -314,7 +322,7 @@ class Workflow:
             target_id=search.id,
             case_id=case_id,
             correlation_id=response.correlation_id,
-            detail=name,
+            detail=detail,
         )
         return search
 
@@ -347,7 +355,13 @@ class Workflow:
     # ---------------------------------------------------------------- export
 
     def initiate_export(
-        self, case_id: str, search_id: str, name: str, portal_url: str
+        self,
+        case_id: str,
+        search_id: str,
+        name: str,
+        portal_url: str,
+        *,
+        note: str = "",
     ) -> ExportHandoff:
         """Start the export and stop.
 
@@ -355,8 +369,13 @@ class Workflow:
         not use one: the application never requests the resource that carries
         the download permission. The handoff is the security model made visible,
         not a gap in the workflow.
+
+        `note` is appended to the audit detail and nowhere else: the page uses
+        it to record that the operator confirmed exporting the smaller of the
+        two searches. It never reaches Purview's export name.
         """
         self._require_write("Initiating an export", Action.EXPORT_INITIATED, case_id)
+        detail = f"{name} — {note}" if note else name
         # The one action with a data-protection consequence outside this tool:
         # after it, content exists in a package someone will collect. Recorded
         # before and after, so an interrupted export is distinguishable from one
@@ -366,7 +385,7 @@ class Workflow:
             Outcome.ATTEMPTED,
             target_id=search_id,
             case_id=case_id,
-            detail=name,
+            detail=detail,
         )
         response = self._ops.initiate_export(
             case_id=case_id, search_id=search_id, display_name=name
@@ -377,7 +396,7 @@ class Workflow:
             target_id=search_id,
             case_id=case_id,
             correlation_id=response.correlation_id,
-            detail=name,
+            detail=detail,
         )
         return ExportHandoff(
             case_id=case_id, search_id=search_id, portal_url=portal_url

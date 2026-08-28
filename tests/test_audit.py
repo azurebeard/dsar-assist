@@ -672,3 +672,102 @@ def test_the_response_correlation_id_prefers_the_graph_echo() -> None:
     assert ours_only.correlation_id == "c-1"
     neither = GraphResponse(200, {}, {})
     assert neither.correlation_id == ""
+
+
+def test_a_confirmed_smaller_export_is_recorded_in_the_trail() -> None:
+    """WS10 SEC-M-02. When the operator exports the search the page has just
+    shown to be the smaller one, the trail says they confirmed it — in the
+    detail, beside the name, and nowhere near Purview's export name."""
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+
+    sink = MemorySink()
+    trail = AuditTrail(sink)
+    named: list[str] = []
+
+    class _Ops:
+        def initiate_export(self, **kw):  # type: ignore[no-untyped-def]
+            named.append(kw["display_name"])
+            return type("R", (), {"body": {}, "correlation_id": "corr-export"})()
+
+    operator = Principal(oid="oid-2", tenant_id="t", roles=frozenset({"DSAR.Operator"}))
+    workflow = Workflow(_Ops(), operator, trail)  # type: ignore[arg-type]
+    workflow.initiate_export(
+        "case-1", "s-1", "Naive", "https://purview.microsoft.com/x",
+        note="smaller search exported after explicit confirmation",
+    )
+    workflow.initiate_export("case-1", "s-2", "Expanded", "https://purview.microsoft.com/x")
+
+    exports = [r for r in sink.records if r.action == Action.EXPORT_INITIATED.value]
+    assert [r.outcome for r in exports] == [
+        Outcome.ATTEMPTED.value, Outcome.OK.value, Outcome.ATTEMPTED.value, Outcome.OK.value,
+    ]
+    assert exports[0].detail == "Naive — smaller search exported after explicit confirmation"
+    assert exports[1].detail == exports[0].detail
+    assert exports[2].detail == "Expanded"
+    # Purview's export name is untouched by the note.
+    assert named == ["Naive", "Expanded"]
+    assert verify_chain(sink.records).intact
+
+
+def test_two_concurrent_searches_keep_the_trail_intact() -> None:
+    """B-31. Handlers run in a threadpool, so the naive and expanded chains
+    write to one trail at the same time. Interleaving is allowed; a forked or
+    broken chain is not, and each search's ATTEMPTED → OK pair must be
+    present and in order under its own name."""
+    import threading
+    import time
+
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import Workflow
+
+    class _SlowSink(MemorySink):
+        """Holds the append open long enough that two unlocked writers would
+        both build on the same predecessor. Without this the race is a few
+        microseconds wide and a missing lock passes by luck — proven by
+        tampering: `AuditTrail._lock` replaced with a no-op passed this test
+        until the sink was slowed."""
+
+        def append(self, record):  # type: ignore[no-untyped-def]
+            time.sleep(0.02)
+            super().append(record)
+
+    sink = _SlowSink()
+    trail = AuditTrail(sink)
+
+    class _Ops:
+        def create_search(self, **kw):  # type: ignore[no-untyped-def]
+            time.sleep(0.05)
+            return type("R", (), {
+                "body": {"id": "id-" + kw["display_name"], "displayName": kw["display_name"]},
+                "correlation_id": "corr-" + kw["display_name"],
+            })()
+
+        def run_search(self, **kw):  # type: ignore[no-untyped-def]
+            return type("R", (), {"body": {}, "correlation_id": "corr-run"})()
+
+    operator = Principal(oid="oid-2", tenant_id="t", roles=frozenset({"DSAR.Operator"}))
+    workflow = Workflow(_Ops(), operator, trail)  # type: ignore[arg-type]
+
+    def chain(name: str) -> None:
+        search = workflow.create_search("case-1", name, 'participants:"a"')
+        workflow.run_estimate("case-1", search.id)
+
+    threads = [threading.Thread(target=chain, args=(n,)) for n in ("Naive", "Expanded")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    result = verify_chain(sink.records)
+    assert result.intact, result.summary()
+    assert [r.seq for r in sink.records] == list(range(1, len(sink.records) + 1))
+    for name in ("Naive", "Expanded"):
+        mine = [
+            r for r in sink.records
+            if r.action == Action.SEARCH_CREATED.value and r.detail == name
+        ]
+        assert [r.outcome for r in mine] == [Outcome.ATTEMPTED.value, Outcome.OK.value], name
+        assert mine[1].correlation_id == "corr-" + name
+        assert mine[1].target_id == "id-" + name
+    assert sum(1 for r in sink.records if r.action == Action.ESTIMATE_STARTED.value) == 2

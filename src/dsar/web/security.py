@@ -67,6 +67,11 @@ SECURITY_HEADERS: dict[str, str] = {
         [
             "accelerometer=()",
             "camera=()",
+            # Neither is used, and both are the ones that matter on a page
+            # showing a data subject's aliases: screen capture from script,
+            # and reading the clipboard (WS10 SEC-L-06).
+            "clipboard-read=()",
+            "display-capture=()",
             "geolocation=()",
             "gyroscope=()",
             "magnetometer=()",

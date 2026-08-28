@@ -31,6 +31,7 @@ from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
@@ -39,7 +40,7 @@ from dsar import __version__
 from dsar.config import Config, ConfigError, load_config, looks_like_guid
 from dsar.auth.desktop import DesktopTokenProvider
 from dsar.auth.msal_client import build_client
-from dsar.auth.session import Session
+from dsar.auth.session import IDLE_TTL_SECONDS, Session
 from dsar.cases.service import CaseService
 from dsar.cases.workflow import Workflow
 from dsar.graph.client import GraphClient
@@ -140,6 +141,11 @@ async def whoami(request: Request) -> Response:
             # when this is true, so a disabled server sees no metrics traffic
             # at all rather than traffic it drops.
             "metrics_enabled": request.app.state.auth.config.metrics,
+            # The server's idle expiry, so the page can clear a subject's
+            # aliases off a shared screen at the same moment the session
+            # dies, instead of on the next click (WS10 SEC-M-03). Stated
+            # from the constant the store enforces, so the two cannot drift.
+            "idle_ttl_seconds": IDLE_TTL_SECONDS,
         }
     )
 
@@ -199,7 +205,21 @@ async def api(request: Request) -> Response:
             return _too_many(wait)
 
     service, workflow = _session_services(request, session)
-    status, payload = handle(
+    # Off the event loop. `handle` drives a synchronous Graph client with a
+    # sixty-second read timeout, and this coroutine used to call it directly —
+    # so every Graph call parked the loop, two requests the browser sent
+    # together ran one after the other, the batch's "two in flight" was one at
+    # Graph, and in hosted mode one operator's thirty-second case create
+    # stalled every other operator's request (B-31, WS10 SEC-L-08). Found by
+    # measuring the submit wait, not by reading the code: four sequential
+    # calls at 18.8 s where two chains of two should take half that.
+    #
+    # What real concurrency touches: the per-session services (built once,
+    # under `session.lock`), the MSAL cache (its own lock, plus the
+    # provider's), the read cache (locked), and the trail (single writer,
+    # locked). Each is held where the state lives, not here.
+    status, payload = await run_in_threadpool(
+        handle,
         request.url.path,
         body,
         principal=principal,
@@ -264,7 +284,18 @@ def _session_services(
     """
     if session.case_service is not None:
         return session.case_service  # type: ignore[no-any-return]
+    # Two concurrent first calls on one session would otherwise each build a
+    # provider and a Graph client and one would be thrown away — with its MSAL
+    # rehydration half done against the shared cache. Built once, under the
+    # session's own lock; the fast path above stays lock-free.
+    with session.lock:
+        # Re-read under the lock: a thread that waited here finds the
+        # services the first one built.
+        session.case_service = session.case_service or _build_services(request, session)
+        return session.case_service  # type: ignore[no-any-return]
 
+
+def _build_services(request: Request, session: Session) -> tuple[CaseService, Workflow]:
     config: Config = request.app.state.config
     app_client = build_client(config)
     # Rehydrate MSAL from the session's own cache: the token belongs to this
@@ -289,7 +320,7 @@ def _session_services(
 
         recorder = _record_op
 
-    services = (
+    return (
         CaseService(operations),
         Workflow(
             operations,
@@ -298,8 +329,6 @@ def _session_services(
             metrics=recorder,
         ),
     )
-    session.case_service = services
-    return services
 
 
 def build_app(config: Config) -> Starlette:

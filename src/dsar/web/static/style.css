@@ -243,3 +243,98 @@ button[disabled] { opacity: 0.6; cursor: progress; }
   .steps li.done { color: #5bc98a; }
   .steps li.failed { color: #f2b8b5; }
 }
+
+/* ---------------------------------------------------------------- B-30 */
+
+/* Interaction states. Chrome's default focus ring is faint on --surface in
+   the dark scheme; an explicit ring reads in both. */
+.button:hover, .tab:hover { filter: brightness(1.06); }
+.button:focus-visible, .tab:focus-visible, .linklike:focus-visible,
+input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.button.subtle { text-decoration: none; }
+.button.subtle:hover { color: var(--fg); }
+
+/* Screen-reader text for a header cell that is visually empty. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* Data tables scroll sideways rather than being clipped at 390 px. */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* The error region sits under the status bar and is styled as one. */
+.error {
+  margin: 0 0 1.25rem; padding: 0.75rem 1rem;
+  border: 1px solid #b3261e; border-radius: 6px; background: var(--surface);
+}
+.error h2 { color: #b3261e; margin-bottom: 0.25rem; }
+@media (prefers-color-scheme: dark) {
+  .error { border-color: #f2b8b5; }
+  .error h2 { color: #f2b8b5; }
+}
+
+/* Header identity: name, role words, sign-out beside them. */
+.identity { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.identity .linklike { font-size: 0.88rem; }
+
+/* Requests list controls and rows. */
+.list-controls {
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  margin: 0 0 0.75rem; font-size: 0.9rem;
+}
+.list-controls label { margin: 0; }
+.list-controls input[type="search"] { width: 14rem; }
+.list-controls select { width: auto; }
+.check { display: inline-flex; align-items: center; gap: 0.35rem; }
+td .sub { display: block; color: var(--muted); font-size: 0.82rem; }
+.chip.status { background: transparent; }
+
+/* The wizard's own stepper. Numbers and names only; the current stage is the
+   one the operator is on, the done ones are behind them. */
+.stepper {
+  display: flex; gap: 0.35rem; flex-wrap: wrap; list-style: none;
+  padding: 0; margin: 0 0 1.25rem; counter-reset: stage; font-size: 0.85rem;
+}
+.stepper li {
+  counter-increment: stage; color: var(--muted);
+  padding: 0.25rem 0.7rem; border: 1px solid var(--line); border-radius: 999px;
+}
+.stepper li::before { content: counter(stage) " · "; }
+.stepper li.current { color: var(--fg); border-color: var(--accent); }
+.stepper li.done { color: #1a7f4b; }
+@media (prefers-color-scheme: dark) { .stepper li.done { color: #5bc98a; } }
+
+/* A completed step collapses to its one-line summary; the inputs keep their
+   values in the DOM so the reset still finds them. */
+fieldset.done .fields { display: none; }
+fieldset.done .summary { display: block; }
+.summary { margin: 0; }
+fieldset.done { padding-bottom: 1rem; }
+details.help summary { font-size: 0.85rem; margin: 0.25rem 0 0.35rem; }
+details.help p { margin-bottom: 0.5rem; }
+
+/* Plain reading of each query, above the KQL it describes. */
+.query-summary { margin: 0.2rem 0 0.4rem; font-size: 0.92rem; }
+.query-summary.edited { color: #a8620a; }
+@media (prefers-color-scheme: dark) { .query-summary.edited { color: #e0a458; } }
+.narrowings { margin: 0 0 0.4rem; }
+.narrowings .chip { font-size: 0.78rem; }
+
+/* Templates open one at a time. The summary carries the name and purpose;
+   guidance, caution and inputs appear on opening. */
+details.template { padding: 0.5rem 1rem; }
+details.template summary { margin: 0.25rem 0; color: var(--fg); font-weight: 500; }
+details.template summary .muted { font-weight: 400; }
+details.template[open] summary { margin-bottom: 0.5rem; }
+
+/* The Purview hand-off is a button, not a URL. */
+.portal .button { margin-right: 0.5rem; }
+
+/* Rows stack into cards on a narrow screen. */
+@media (max-width: 640px) {
+  header { align-items: flex-start; }
+  main { padding: 1.25rem 1rem 2rem; }
+}

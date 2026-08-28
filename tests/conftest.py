@@ -82,6 +82,18 @@ def config_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
+    # The developer's own shell is not the deployment under test. A
+    # secret-shaped variable set for some unrelated tool (observed: a
+    # *_PASSWORD from another project) made doctor's no-secrets check fail
+    # in three tests that were asserting the opposite. Scrubbed here, so the
+    # check is exercised only by the variables a test sets on purpose.
+    import os
+
+    from dsar.config import SECRET_SHAPED_SUFFIXES
+
+    for key in list(os.environ):
+        if key.upper().endswith(tuple(s.upper() for s in SECRET_SHAPED_SUFFIXES)):
+            monkeypatch.delenv(key, raising=False)
     return values
 
 

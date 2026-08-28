@@ -429,3 +429,26 @@ def test_the_estimate_duration_comes_from_purview_s_own_timestamps() -> None:
         "completedDateTime": "2026-08-17T14:12:00Z",
     }))
     assert mixed.statistics.run_seconds is None
+
+
+def test_the_listing_keeps_its_own_read_time_across_a_concurrent_invalidate() -> None:
+    """WS10 gate SEC-L-01. `list_requests` used to re-read `self._cache` after
+    the locked read returned, to stamp the listing with when it was fetched.
+    With handlers in a threadpool (B-31), a batch case-create's `invalidate()`
+    can land in that gap, and the assertion that guarded the re-read became a
+    500 on the requests list. The read's own timestamp now travels with its
+    result, so an invalidate in the gap is a cache miss on the NEXT read and
+    nothing else."""
+    ops = FakeOps([{"value": [_case("ours", "dsar:v1:DSAR-1", ME)]}])
+    service = CaseService(ops)
+    real = service._all_ours
+
+    def read_then_invalidate(*, force: bool):  # noqa: ANN202
+        result = real(force=force)
+        service.invalidate()  # the other thread, between the read and the stamp
+        return result
+
+    service._all_ours = read_then_invalidate  # type: ignore[method-assign]
+    listing = service.list_requests(_principal())  # type: ignore[arg-type]
+    assert [c.id for c in listing.cases] == ["ours"]
+    assert listing.fetched_at > 0

@@ -333,7 +333,7 @@ def test_opening_a_case_clears_the_previous_one(client: TestClient) -> None:
     """
     script = client.get("/app.js").text
     assert "function clearCaseView()" in script
-    open_case = script.split("async function openCase(item)", 1)[1].split("\n  }", 1)[0]
+    open_case = script.split("async function openCase(item, seed)", 1)[1].split("\n  }", 1)[0]
     # Before showView, not after — clearing after the paint is a flicker of the
     # wrong data rather than an absence of it.
     assert open_case.index("clearCaseView()") < open_case.index('showView("case")')
@@ -591,3 +591,415 @@ def test_the_batch_is_client_driven_and_resumes_without_repeating_writes(
 
     batch_endpoints = [e for e in API_ENDPOINTS if "batch" in e]
     assert batch_endpoints == ["/api/batch/validate"]
+
+
+# ------------------------------------------------------------------ B-30/31
+# The UX round of 2026-08-28 (five reviewers over a live walkthrough) and the
+# two source defects it surfaced: Graph calls on the event loop, and a busy
+# status that expired before the work did.
+
+
+def _signed_in(client: TestClient, roles: tuple[str, ...] = ("DSAR.Operator",)):  # noqa: ANN202
+    """Seed a session straight into the app's store and hand the cookie to the
+    client. The auth flow is tested elsewhere; here the session is a given."""
+    import msal
+
+    from dsar.auth.provider import Principal
+    from dsar.auth.session import cookie_names
+
+    core = client.app
+    while not hasattr(core, "state"):
+        core = core.app
+    state = core.state.auth
+    principal = Principal(
+        oid="oid-web",
+        tenant_id="66666666-7777-8888-9999-aaaaaaaaaaaa",
+        upn="operator@example.test",
+        roles=frozenset(roles),
+    )
+    session = state.sessions.create(principal, msal.TokenCache())
+    name, _ = cookie_names(False)
+    client.cookies.set(name, session.id)
+    return session
+
+
+def test_graph_handlers_run_off_the_event_loop(client: TestClient, monkeypatch) -> None:
+    """B-31. `api()` is a coroutine and `handle()` drives a synchronous Graph
+    client with a sixty-second read timeout. Called directly, every Graph
+    call parked the event loop: two requests the browser sent together ran
+    one after the other, the batch's "two in flight" was one at Graph, and
+    in hosted mode one operator's thirty-second case create stalled every
+    other operator's request. Measured, not read: the four-call submit took
+    18.8 s where two chains of two should take half that.
+
+    Two 0.4 s handlers from two threads must overlap. Serial is 0.8 s.
+    """
+    import threading
+    import time
+
+    import dsar.web.app as web_app
+
+    _signed_in(client)
+
+    def slow_handle(path, body, **kwargs):  # noqa: ANN001, ANN202
+        time.sleep(0.4)
+        return 200, {"path": path}
+
+    monkeypatch.setattr(web_app, "handle", slow_handle)
+    monkeypatch.setattr(web_app, "_session_services", lambda request, session: (None, None))
+
+    codes: list[int] = []
+
+    def call() -> None:
+        codes.append(
+            client.post(
+                "/api/requests", json={}, headers={"Origin": "http://localhost:8765"}
+            ).status_code
+        )
+
+    # One portal, one event loop, shared by both threads. Outside the context
+    # manager the TestClient spins up a loop per request, which would let two
+    # blocking handlers overlap for the wrong reason and prove nothing —
+    # found by tampering: the un-threadpooled handler passed this test until
+    # the requests were made to share a loop.
+    started = time.monotonic()
+    with client:
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    elapsed = time.monotonic() - started
+    assert codes == [200, 200]
+    assert elapsed < 0.7, (
+        f"two 0.4 s handlers took {elapsed:.2f} s — they ran one after the other, "
+        "so the handler is back on the event loop"
+    )
+
+
+def test_session_services_are_built_once_under_concurrency(client: TestClient, monkeypatch) -> None:
+    """With handlers in a threadpool, two first calls on one session can race
+    to build its Graph services — and one MSAL rehydration against the shared
+    cache would be thrown away half done. Built once, under the session's own
+    lock; the second caller gets the first's result."""
+    import threading
+    import time
+
+    import dsar.web.app as web_app
+
+    session = _signed_in(client)
+    built: list[int] = []
+
+    def slow_build(request, session):  # noqa: ANN001, ANN202
+        time.sleep(0.2)
+        built.append(1)
+        return ("cases", "workflow")
+
+    monkeypatch.setattr(web_app, "_build_services", slow_build)
+    seen: list[object] = []
+    threads = [
+        threading.Thread(target=lambda: seen.append(web_app._session_services(None, session)))  # type: ignore[arg-type]
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert built == [1], f"services were built {len(built)} times"
+    assert seen == [("cases", "workflow")] * 2
+    assert session.case_service == ("cases", "workflow")
+
+
+def test_a_query_without_the_subject_is_refused_until_confirmed(config_env) -> None:
+    """WS10 SEC-M-01. Every generated query names the subject as a
+    participant; a query without that clause is one the operator edited down
+    to bare text, which for a common name is an estate-wide search under their
+    delegated identity. Refused unless the page asked and they said yes. A
+    shape check, not a parser — and a quoted phrase is a phrase."""
+    from dsar.auth.provider import Principal
+    from dsar.cases.model import Search, Statistics
+    from dsar.config import load_config
+    from dsar.web.api import handle
+
+    operator = Principal(
+        oid="oid-1",
+        tenant_id="66666666-7777-8888-9999-aaaaaaaaaaaa",
+        roles=frozenset({"DSAR.Operator"}),
+    )
+    created: list[str] = []
+
+    class _Workflow:
+        def create_search(self, case_id, name, query, *, note=""):  # noqa: ANN001, ANN202
+            created.append((query, note))
+            return Search(
+                id="s-1", display_name=name, created="2026-08-28T00:00:00Z",
+                content_query=query,
+                statistics=Statistics(
+                    item_count=None, total_size=None, location_count=None,
+                    mailbox_count=None, site_count=None, status="", complete=False,
+                ),
+            )
+
+        def run_estimate(self, case_id, search_id):  # noqa: ANN001, ANN202
+            return None
+
+    def create(query: str, **extra: object):  # noqa: ANN202
+        return handle(
+            "/api/search/create",
+            {"case_id": "case-1", "kind": "expanded", "query": query, "run": False, **extra},
+            principal=operator,
+            cases=None,  # type: ignore[arg-type]
+            config=load_config(),
+            workflow=_Workflow(),  # type: ignore[arg-type]
+        )
+
+    status, payload = create('"Megan Bowen" OR "Meg"')
+    assert status == 400 and payload["error"] == "unscoped_query"
+    assert created == []
+
+    # The clause inside a quoted phrase does not count.
+    status, payload = create('"participants: all staff" OR "Meg"')
+    assert status == 400 and payload["error"] == "unscoped_query"
+    assert created == []
+
+    # The generated shape passes without ceremony, and without a note.
+    status, _ = create('participants:"meganb@example.test" OR "Meg"')
+    assert status == 201 and created == [('participants:"meganb@example.test" OR "Meg"', "")]
+
+    # The explicit answer lets an unscoped one through — and is written down
+    # in the audit detail as a fixed phrase, never the query (WS10 gate
+    # SEC-L-02, mirroring the smaller-export confirmation).
+    status, _ = create('"Megan Bowen" OR "Meg"', confirm_unscoped=True)
+    assert status == 201
+    assert created[-1] == ('"Megan Bowen" OR "Meg"', "unscoped query run after explicit confirmation")
+
+    # The flag on a scoped query records nothing: there was nothing to confirm.
+    status, _ = create('participants:"meganb@example.test"', confirm_unscoped=True)
+    assert status == 201 and created[-1][1] == ""
+
+
+def test_a_confirmed_smaller_export_reaches_the_workflow_as_a_note(config_env) -> None:
+    """WS10 SEC-M-02. The page gates the export of the smaller search behind a
+    confirmation that states the difference; the choice travels as a flag and
+    lands in the audit detail as a note — never a count, never a query, and
+    never in Purview's export name."""
+    from dsar.auth.provider import Principal
+    from dsar.cases.workflow import ExportHandoff
+    from dsar.config import load_config
+    from dsar.web.api import handle
+
+    operator = Principal(
+        oid="oid-1",
+        tenant_id="66666666-7777-8888-9999-aaaaaaaaaaaa",
+        roles=frozenset({"DSAR.Operator"}),
+    )
+    seen: list[tuple[str, str]] = []
+
+    class _Workflow:
+        def initiate_export(self, case_id, search_id, name, portal_url, *, note=""):  # noqa: ANN001, ANN202
+            seen.append((name, note))
+            return ExportHandoff(case_id=case_id, search_id=search_id, portal_url=portal_url)
+
+    for flag, expected in ((True, "smaller search exported after explicit confirmation"), (False, "")):
+        status, _ = handle(
+            "/api/export",
+            {"case_id": "case-1", "search_id": "s-1", "name": "Naive", "confirmed_smaller": flag},
+            principal=operator,
+            cases=None,  # type: ignore[arg-type]
+            config=load_config(),
+            workflow=_Workflow(),  # type: ignore[arg-type]
+        )
+        assert status == 202
+        assert seen[-1] == ("Naive", expected)
+
+
+def test_the_page_signs_itself_out_at_the_idle_ttl(client: TestClient) -> None:
+    """WS10 SEC-M-03. The server expired an idle session and the page found
+    out on the next click — a resolved subject's aliases stayed on a shared
+    screen for as long as nobody clicked. The TTL travels on whoami, from the
+    constant the store enforces, and the page runs the same teardown a 401
+    would when it lapses."""
+    from dsar.auth.session import IDLE_TTL_SECONDS
+
+    _signed_in(client)
+    me = client.get("/api/whoami").json()
+    assert me["idle_ttl_seconds"] == IDLE_TTL_SECONDS
+
+    script = client.get("/app.js").text
+    arm = script.split("function armIdleTimer()", 1)[1].split("\n  }", 1)[0]
+    assert "state.idleTtlSeconds * 1000" in arm
+    expired = script.split("function idleExpired()", 1)[1].split("\n  }", 1)[0]
+    assert "renderSignedOut()" in expired
+    # A timer sleeps with the machine; the wall-clock deadline is checked when
+    # the page is looked at again (WS10 gate SEC-L-04).
+    assert "state.idleDeadline" in arm
+    assert 'addEventListener(event, () => {' in script and "Date.now() >= state.idleDeadline" in script
+    # Re-armed by every API call, the same events the server counts.
+    api_fn = script.split("async function api(path, body)", 1)[1].split("\n  }", 1)[0]
+    assert "armIdleTimer()" in api_fn
+
+
+def test_reads_show_a_status_like_writes(client: TestClient) -> None:
+    """Frames 02 and 18 of the live walkthrough: a heading and a footer for
+    four seconds after sign-in, and a title and two buttons on arriving in a
+    case. Writes had a status bar; reads did not. Now both do, and the case
+    view is seeded from the searches the page has just created."""
+    script = client.get("/app.js").text
+    load = script.split("async function loadRequests()", 1)[1].split("\n  }", 1)[0]
+    assert 'sustained("Reading your cases' in load
+    open_case = script.split("async function openCase(item, seed)", 1)[1].split("\n  }", 1)[0]
+    assert 'status("Reading the case' in open_case
+    assert "renderSearchRows(seed" in open_case
+    # The seed comes from the create responses, not a guess.
+    assert "outcomes.map((o) => o.search)" in script
+
+
+def test_the_busy_status_is_renewed_for_as_long_as_the_request_runs(client: TestClient) -> None:
+    """The fixed fifteen-second expiry fired mid-wait on half of real case
+    creates (median 15 s, p90 29 s), leaving the button saying "Creating…"
+    under a bar that had gone quiet. Long requests renew it until they
+    settle; the expiry stays as the safety net."""
+    script = client.get("/app.js").text
+    sustained = script.split("function sustained(text, epoch)", 1)[1].split("\n  }", 1)[0]
+    assert "setInterval" in sustained and "status(text, true, epoch)" in sustained
+    assert script.count("sustained(") >= 5  # the definition plus four long waits
+    assert script.count("finally { stop(); }") >= 4
+
+
+def test_the_two_search_chains_run_together(client: TestClient) -> None:
+    """The naive and expanded chains are independent; the second used to wait
+    for the first to finish both of its calls. Half the submit wait — real
+    only because the server runs handlers off its event loop (B-31)."""
+    script = client.get("/app.js").text
+    assert 'Promise.all([chain("naive"), chain("expanded")])' in script
+    # A one-sided failure names the side and says the other search exists.
+    assert "search could not be created." in script
+    assert "was created and its estimate started" in script
+
+
+def test_the_subject_can_be_typed_while_the_case_is_created(client: TestClient) -> None:
+    """B-32. Step 2 was disabled for the fifteen to thirty seconds Purview
+    takes to create the case, and the operator sat idle. Only the button that
+    needs the case id waits for it."""
+    html = client.get("/").text
+    fieldset = html.split('<fieldset id="subject-fieldset"', 1)[1].split(">", 1)[0]
+    assert "disabled" not in fieldset
+    expand = html.split('id="expand"', 1)[1].split(">", 1)[0]
+    assert "disabled" in expand
+    script = client.get("/app.js").text
+    assert '$("expand").disabled = false' in script
+    reset = script.split("function resetNewRequestForm()", 1)[1].split("\n  }", 1)[0]
+    assert '$("expand").disabled = true' in reset
+
+
+def test_an_edited_query_says_so_and_a_subjectless_one_asks(client: TestClient) -> None:
+    """WS10 SEC-M-01, client half. The KQL stays visible and editable —
+    hiding it would remove the operator's accountability for what runs — but
+    a box that differs from the generated text says so in place of its plain
+    sentence, and a run whose query no longer includes the primary address
+    asks before sending the flag the server requires."""
+    script = client.get("/app.js").text
+    assert "Edited by hand" in script
+    scope = script.split("function confirmScope()", 1)[1].split("\n  }", 1)[0]
+    assert "window.confirm(" in scope
+    assert "state.current" in scope
+    assert "confirm_unscoped: !!confirmUnscoped" in script
+    # A plain sentence per query, from the same facts as the chips.
+    assert "function renderQuerySummaries()" in script
+    assert 'addEventListener("input", renderQuerySummaries)' in script
+
+
+def test_the_smaller_search_export_asks_first(client: TestClient) -> None:
+    """WS10 SEC-M-02, client half. Both Export links looked identical under a
+    banner saying the naive search had missed items. When both estimates are
+    complete and the expanded one found more, the naive row's export is the
+    quiet control and it confirms, and the choice is sent as a flag."""
+    script = client.get("/app.js").text
+    rows = script.split("function renderSearchRows(rows)", 1)[1].split("\n  }", 1)[0]
+    assert "naiveIsSmaller" in rows and "window.confirm(" in rows
+    assert "fewer item" in rows
+    assert "confirmed_smaller: !!confirmedSmaller" in script
+    # And a started export stays visible on its row after the status expires.
+    assert "state.exported.has(search.search_id)" in rows
+
+
+def test_the_purview_handoff_is_a_link_not_a_url(client: TestClient) -> None:
+    """Frame 19: the one thing the operator must do next was a 150-character
+    URL to copy by hand. An anchor now, with the origin checked before the
+    string becomes somewhere the browser will go, and the tenant-bearing
+    address out of the visible text."""
+    script = client.get("/app.js").text
+    portal = script.split("function renderPortal(url, note)", 1)[1].split("\n  }", 1)[0]
+    assert 'indexOf("https://purview.microsoft.com/") === 0' in portal
+    assert 'link.rel = "noopener noreferrer"' in portal
+    assert 'link.target = "_blank"' in portal
+    assert 'setText("case-portal"' not in script
+
+
+def test_the_error_region_is_announced_at_the_top(client: TestClient) -> None:
+    """Errors rendered at the foot of a 2,700 px form, with no live region.
+    Under the status bar now, `role="alert"`, scrolled to and focused."""
+    html = client.get("/").text
+    assert html.index('id="error"') < html.index('id="signed-out"')
+    error = html.split('id="error"', 1)[1].split(">", 1)[0]
+    assert 'role="alert"' in error
+    script = client.get("/app.js").text
+    fail_fn = script.split("function fail(payload, fallback)", 1)[1].split("\n  }", 1)[0]
+    assert "scrollIntoView" in fail_fn and '$("error-title").focus' in fail_fn
+
+
+def test_a_reference_carrying_the_name_is_refused_before_the_case_exists(client: TestClient) -> None:
+    """WS10 SEC-M-05. The reference is free text that lands in a permanent
+    audit record and the Purview case name; "DSAR Megan Bowen 2026" is a
+    valid reference. Refused while the case does not yet exist, warned once
+    it does, and refused in a batch row."""
+    script = client.get("/app.js").text
+    assert "function referenceCarriesName(reference, name)" in script
+    create = script.split('$("create-case").addEventListener', 1)[1].split("withBusy(", 1)[0]
+    assert "checkReference()" in create
+    assert "referenceCarriesName(row.reference, row.display_name)" in script
+    html = client.get("/").text
+    assert "never the person's name" in html
+
+
+def test_permissions_policy_denies_capture_and_clipboard(client: TestClient) -> None:
+    """WS10 SEC-L-06: neither is used, and both matter on a page showing a
+    data subject's aliases."""
+    policy = client.get("/healthz").headers["Permissions-Policy"]
+    assert "display-capture=()" in policy
+    assert "clipboard-read=()" in policy
+
+
+def test_the_requests_list_filters_and_orders_in_memory(client: TestClient) -> None:
+    """Forty flat rows with no filter, sort or closed state (frame 21). All of
+    it is a view over the list already read — no request, no storage."""
+    script = client.get("/app.js").text
+    render = script.split("function renderRequests()", 1)[1].split("\n  }", 1)[0]
+    assert "state.requests" in render
+    assert "api(" not in render
+    assert "localStorage" not in script and "sessionStorage" not in script
+    html = client.get("/").text
+    for control in ("requests-filter", "requests-order", "requests-closed"):
+        assert f'id="{control}"' in html, control
+
+
+def test_the_batch_file_input_has_a_name(client: TestClient) -> None:
+    """The one axe critical of the walkthrough: a file input with no label."""
+    html = client.get("/").text
+    assert '<label for="batch-file">' in html
+    # And the empty action headers say what they are to a screen reader.
+    assert html.count('<span class="visually-hidden">Actions</span>') == 2
+
+
+def test_no_handler_shadows_the_status_function(client: TestClient) -> None:
+    """`const { status, payload } = await api(...)` inside `refreshCase`
+    shadowed the `status()` live-region function, so the completion branch's
+    `status(null)` threw a TypeError the surrounding catch swallowed — and
+    everything after it, including the Purview hand-off, never rendered for
+    a case opened from the list. A running poll reached the hand-off by a
+    different branch and left it in the DOM, which hid the defect from every
+    walkthrough until a completed case was opened cold. Every response is
+    destructured as `code` now, and this holds it there."""
+    script = client.get("/app.js").text
+    assert "{ status, payload }" not in script
+    assert script.count("{ status: code, payload }") >= 3

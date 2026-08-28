@@ -111,6 +111,10 @@ class Session:
     #: Per-session, not global: its read cache holds one operator's cases, and
     #: sharing that between people is how a shared instance leaks a list.
     case_service: Any = None
+    #: Guards the one-time construction of `case_service`. API handlers run
+    #: in a threadpool, so two first calls on one session can race; the
+    #: services are built once, under this, and read lock-free afterwards.
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def expired(self, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now

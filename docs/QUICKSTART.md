@@ -55,14 +55,20 @@ either fails it names the person to ask, not an error code.
    the request arrived. The date drives the one-calendar-month clock shown on
    every case; it is recorded once, at creation. Extensions and clock pauses
    are not modelled; the date shown is the baseline.
-2. **The data subject.** Their primary email, plus everything the directory
+2. **The person.** Their primary email, plus everything the directory
    cannot know: nicknames, a former surname, a personal address they wrote
-   in from. This is where responses are won; in measurement, one nickname
-   was worth an entire location the plain search never looked at.
-3. **Resolve identity.** The tool shows what it found, grouped by where it
-   came from, and builds two searches: the naive one (primary address only)
-   and the expanded one (everything known). Both are shown before anything
-   runs, and both are editable.
+   in from. You can type this while the case is still being created. This is
+   where responses are won; in measurement, one nickname was worth an entire
+   location the plain search never looked at.
+3. **Find everything known about this person.** The tool shows what it
+   found, grouped by where it came from, and builds two searches: primary
+   address only (the naive search) and everything known (the expanded
+   search). Each is described in a plain sentence above the search text
+   itself. Both are shown before anything runs, and both are editable; if
+   you edit one, the page says so. A search that has lost its participants
+   clause, and would look for the words alone across every mailbox and
+   site, is refused until you confirm it, and the page asks before running
+   an edited search that no longer includes the primary address.
 4. **Narrow if the request calls for it** with a reviewed template: a date
    window, employment-file vocabulary, attachments. Apply narrowings to both
    searches so they stay comparable; the page warns you if they stop being.
@@ -84,9 +90,11 @@ that as unfinished business, not a smaller total.
 
 Export starts from the case view but delivers in the Microsoft Purview
 portal, under your own sign-in, where review and redaction live. The case
-link is on the page. This is a boundary, not a missing feature: the tool
-never touches responsive content, which is what makes it safe to run on any
-machine.
+view carries a button that opens the case there. Exporting the smaller of
+the two searches asks you to confirm, because the response would be built
+on the search the page has just shown to be incomplete. This is a boundary,
+not a missing feature: the tool never touches responsive content, which is
+what makes it safe to run on any machine.
 
 Every action along the way, including anything refused, lands in a
 tamper-evident record. When the response goes out:

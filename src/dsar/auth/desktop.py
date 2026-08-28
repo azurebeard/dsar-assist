@@ -7,6 +7,7 @@ nothing downstream can name another account even by mistake.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import msal
@@ -42,6 +43,13 @@ class DesktopTokenProvider:
         self._config = config
         self._principal = principal
         self._account = account
+        #: Graph calls run concurrently per session since B-31. The token
+        #: cache has its own lock, but a silent acquisition that finds the
+        #: access token expired performs a refresh — and two threads doing
+        #: that at once is two refresh-token redemptions for one operator,
+        #: which some tenants treat as reuse. One at a time; it is fast when
+        #: the cache is warm, which is every call but the first.
+        self._lock = threading.Lock()
 
     @property
     def principal(self) -> Principal:
@@ -54,11 +62,12 @@ class DesktopTokenProvider:
                 "no cached account matches the signed-in operator; sign in again"
             )
 
-        result = self._app.acquire_token_silent_with_error(
-            scopes_for(self._config),
-            account=account,
-            claims_challenge=claims_challenge,
-        )
+        with self._lock:
+            result = self._app.acquire_token_silent_with_error(
+                scopes_for(self._config),
+                account=account,
+                claims_challenge=claims_challenge,
+            )
 
         if result and "access_token" in result:
             return str(result["access_token"])

@@ -46,16 +46,16 @@ against the claim: a download-capable scope refuses the sign-in outright.
 The operator signs in as themselves. The tool can see nothing their own
 Purview permissions do not already allow, and holds no credential of its own.
 
-![The request list, with the statutory deadline and days remaining per case. Overdue and due-soon rows are highlighted, and a case with no recorded receipt date says so.](docs/images/requests.png)
+![The request list, filterable and orderable, with the received date, the statutory deadline and days remaining per case. Overdue rows are highlighted, and a case with no recorded receipt date says so.](docs/images/requests.png)
 
-The two queries are always shown before anything runs, side by side and
-editable:
+The two searches are always shown before anything runs, each described in a
+plain sentence above the query text, which stays visible and editable:
 
-![The resolved subject, grouped by provenance: supplied by the operator, from the directory, searched as text, and the employee ID labelled as matched but not searched. Below, the naive and expanded queries side by side, editable, with nothing yet run.](docs/images/two-queries.png)
+![The person as the search will look for them, grouped by provenance: the address the operator supplied, the addresses the directory knows, the names searched as text, and the employee ID labelled as matched but not searched. Below, the primary-address-only and everything-known searches, each with a plain-English sentence above its query text.](docs/images/two-queries.png)
 
 And once both estimates complete, the difference is stated plainly:
 
-![A case with both searches complete: the naive query found 40 items across 12 mailboxes and 1 site, the expanded query 61 items across 14 mailboxes and 3 sites, and the banner reads: the naive query missed 21 items, 53% more, and 4 locations it never looked at.](docs/images/case-delta.png)
+![A case with both searches complete: primary address only found 40 items across 12 mailboxes and 1 site, everything known found 61 items across 14 mailboxes and 3 sites, and the banner reads: the primary-address search alone would have missed 21 items, 53% more than it found, and 4 locations it never looked at.](docs/images/case-delta.png)
 
 ## What it is not
 
@@ -158,9 +158,14 @@ your name.
    received. The received date drives the deadline and is written once, at
    creation. Left blank, the deadline shows as "not recorded" rather than
    being derived from the creation date.
-2. **Resolve the subject.** Primary email, plus anything the directory cannot
-   know: nicknames, former names, addresses from the request itself. Review
-   the naive and expanded queries side by side. Edit them if needed.
+2. **The person.** Primary email, plus anything the directory cannot know:
+   nicknames, former names, addresses from the request itself. Typed while
+   the case is still being created, if you like. The two searches are then
+   shown side by side, each with a plain-English sentence above its text.
+   Edit them if needed; an edited search says so. One that has lost its
+   participants clause, and would search every mailbox and site for the
+   words alone, is refused until you confirm it; the page also asks before
+   running an edited search that no longer includes the primary address.
 3. **Narrow if needed.** Templates stack onto the queries with AND. Apply to
    both queries unless you mean otherwise; the tool warns when the two stop
    being comparable, and when a narrowing counts mailbox content only.
