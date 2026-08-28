@@ -32,16 +32,16 @@ macOS or Linux:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar init
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.2 dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.2 dsar up
 ```
 
 Windows (PowerShell):
 
 ```powershell
 winget install astral-sh.uv
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar init
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar up
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.2 dsar init
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.2 dsar up
 ```
 
 `init` asks for the two IDs and runs once. `up` opens your browser; sign in
@@ -100,7 +100,7 @@ Every action along the way, including anything refused, lands in a
 tamper-evident record. When the response goes out:
 
 ```bash
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar audit evidence <case-id>
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.2 dsar audit evidence <case-id>
 ```
 
 produces the per-case evidence pack, suitable for the file.
@@ -108,7 +108,7 @@ produces the per-case evidence pack, suitable for the file.
 ## When something is wrong
 
 ```bash
-uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.1 dsar doctor
+uvx --from git+https://github.com/azurebeard/dsar-assist@v0.1.2 dsar doctor
 ```
 
 names the problem and the fix for anything that does not need a sign-in.

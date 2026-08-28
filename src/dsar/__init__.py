@@ -20,4 +20,4 @@ __all__ = ["__version__"]
 # structural test, because the v0.1.1 tag shipped reporting "dsar 0.1.0": the
 # release bump touched pyproject and this line drifted, while the doctor
 # "version agreement" check compared this constant against itself.
-__version__ = "0.1.1"
+__version__ = "0.1.2"
