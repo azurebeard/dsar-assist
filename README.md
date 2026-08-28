@@ -118,7 +118,7 @@ repointed and a digest cannot; this is the signed digest of the release:
 ```bash
 docker run --rm -p 127.0.0.1:8765:8765 \
   -v ~/.dsar:/home/dsar/.dsar \
-  ghcr.io/azurebeard/dsar-assist@sha256:e1e5f3300b301d43670f2d82a3621fbb4ea0c833032bdd7f52a231fa17b2da51
+  ghcr.io/azurebeard/dsar-assist@sha256:094c72fee889168b276d981e7521627e9f5c1156478513592ab36e69f3339f27
 ```
 
 The verification command for the signature is in
