@@ -72,7 +72,7 @@ RUN mkdir -p /seed/var/lib/dsar/audit \
 # is 65532, and the launchers, the Bicep and three tests all assert 10001 —
 # changing the uid to satisfy the base image would mean changing five things
 # that are correct for a reason that is cosmetic.
-FROM gcr.io/distroless/cc-debian12:latest@sha256:6e1871c34683dc9ee996d13084497783fd98ac0200213d0826625f4e9d4be1d0
+FROM gcr.io/distroless/cc-debian12:latest@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
 
 COPY --from=builder /opt/python /opt/python
 COPY --from=builder /app /app
